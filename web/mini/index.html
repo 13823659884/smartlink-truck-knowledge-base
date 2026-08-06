@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <meta name="theme-color" content="#f6f7f8" />
+    <title>鱼快创领 · 商用车知识助手</title>
+    <link rel="stylesheet" href="/mini/mini.css" />
+  </head>
+  <body>
+    <div class="mini-shell">
+      <header class="mini-header">
+        <div class="status-row"><span id="clock">09:41</span><span>••• 5G ▰</span></div>
+        <div class="nav-row">
+          <button class="back" type="button" aria-label="返回电脑版" onclick="location.href='/'">‹</button>
+          <strong>鱼快创领 · 知识助手</strong>
+          <div class="capsule"><span>•••</span><i></i><span>◎</span></div>
+        </div>
+      </header>
+
+      <main id="scrollArea">
+        <section class="welcome">
+          <div class="bot-mark">智</div>
+          <div>
+            <span class="eyebrow">企业专有知识库</span>
+            <h1>车辆问题，随时问我</h1>
+            <p id="agentStatus">正在连接知识库...</p>
+          </div>
+        </section>
+
+        <details class="filters">
+          <summary>选择车型与场景 <span>可选</span></summary>
+          <div class="filter-grid">
+            <label>车型<select id="vehicleSeries"><option value="">全部车型</option></select></label>
+            <label>场景<select id="scene"><option value="">全部场景</option><option>用</option><option>养</option><option>修</option><option>保</option></select></label>
+            <label>回答模式<select id="answerMode"><option value="fast">快速问答</option><option value="deep">深度诊断</option></select></label>
+          </div>
+        </details>
+
+        <section class="quick-section" id="capabilitySection">
+          <h2>查询能力</h2>
+          <div id="capabilityList" class="capability-list"></div>
+        </section>
+
+        <section class="quick-section" id="historySection" hidden>
+          <h2>最近记录</h2>
+          <div id="historyList" class="history-list"></div>
+        </section>
+
+        <section class="quick-section" id="quickSection">
+          <h2>常用问题</h2>
+          <div class="quick-grid">
+            <button type="button"><b>故障诊断</b><span>无法上高压怎么排查？</span></button>
+            <button type="button"><b>维护保养</b><span>变速箱怎么保养？</span></button>
+            <button type="button"><b>故障码</b><span>BMS故障码怎么排查？</span></button>
+            <button type="button"><b>制动系统</b><span>刹车片磨损怎么检查？</span></button>
+          </div>
+        </section>
+
+        <section id="conversation" class="conversation" aria-live="polite">
+          <article class="bubble-row assistant">
+            <div class="avatar">智</div>
+            <div class="bubble">你好，我可以查询车辆用、养、修、保资料。答案下方会列出原始文档、对应页码和参考内容。</div>
+          </article>
+        </section>
+      </main>
+
+      <section class="composer-wrap">
+        <div id="imageStatus" class="image-status" hidden></div>
+        <form id="askForm" class="composer">
+          <textarea id="question" rows="1" placeholder="请输入车辆问题" required></textarea>
+          <button id="sendButton" type="submit">发送</button>
+        </form>
+        <nav class="tabbar" aria-label="底部导航">
+          <button class="active" type="button"><span>⌂</span>问答</button>
+          <button type="button" id="imageButton"><span>▣</span>图片识别</button>
+          <button type="button" id="clearButton"><span>↻</span>新对话</button>
+        </nav>
+        <input id="imageInput" type="file" accept="image/*" capture="environment" hidden />
+      </section>
+    </div>
+    <script src="/mini/mini.js"></script>
+  </body>
+</html>
