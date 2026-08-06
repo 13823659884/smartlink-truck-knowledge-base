@@ -1,0 +1,13 @@
+.env
+__pycache__/
+*.pyc
+output/
+logs/
+tools/python_packages/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.log
+*.tmp

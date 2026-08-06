@@ -1,0 +1,54 @@
+{
+  "name": "中重卡用养修保专有知识库",
+  "source_root": "../0729中重卡知识库素材",
+  "graph_output": "../knowledge_graph/output",
+  "output_dir": "output",
+  "chunk_size": 900,
+  "chunk_overlap": 120,
+  "vector_dimensions": 768,
+  "retrieval": {
+    "backend": "qdrant_hybrid",
+    "candidate_limit": 160,
+    "semantic_limit": 48,
+    "qdrant_path": "output/qdrant",
+    "qdrant_collection": "truck_knowledge_chunks",
+    "embedding_model": "BAAI/bge-small-zh-v1.5",
+    "embedding_dimensions": 512,
+    "rrf_k": 60,
+    "cache_max_entries": 256,
+    "cache_ttl_seconds": 600,
+    "performance_sample_size": 500,
+    "preview_warm_workers": 2
+  },
+  "ocr": {
+    "enabled": true,
+    "engine": "rapidocr_onnx",
+    "render_dpi": 160,
+    "min_confidence": 0.45,
+    "max_pages_per_document": 200
+  },
+  "vehicle_series": [
+    "J7",
+    "J6",
+    "J6P",
+    "J6L",
+    "JH6",
+    "JK6",
+    "J6F",
+    "J5",
+    "虎6G",
+    "领途",
+    "鹰途",
+    "鹰阵",
+    "V卡"
+  ],
+  "scenes": {
+    "用车": "用",
+    "保养": "养",
+    "修车": "修",
+    "故障码": "修",
+    "服务技术文件": "修",
+    "图纸": "修",
+    "保用标准": "保"
+  }
+}
