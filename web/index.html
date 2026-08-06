@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#082a5e" />
+    <title>鱼快创领 · 商用车知识智能助手</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="header-brand">
+        <img src="/assets/smartlink-logo.png" alt="鱼快创领 Smartlink" />
+        <span class="header-divider"></span>
+        <div>
+          <strong>商用车知识智能助手</strong>
+          <small>企业用 · 养 · 修 · 保知识库</small>
+        </div>
+      </div>
+      <div class="header-actions">
+        <span id="health" class="status"><i></i>正在连接知识库</span>
+        <a href="/mini/" class="mini-link"><span>▦</span> 小程序版</a>
+      </div>
+    </header>
+
+    <main class="app-layout">
+      <aside class="filter-panel panel">
+        <div class="panel-heading">
+          <div class="heading-icon">能</div>
+          <div><h2>能力中心</h2><p>选择查询类型</p></div>
+        </div>
+        <nav id="capabilityMenu" class="capability-menu" aria-label="查询能力"></nav>
+        <div class="filter-divider-line"></div>
+        <div class="section-label"><span>车辆与范围</span><i>可选</i></div>
+        <div class="filter-fields">
+          <label><span>车牌号 / VIN</span><input id="vehicleId" placeholder="选填车辆编号" /></label>
+          <label><span>车辆系列</span><select id="vehicleSeries"><option value="">全部车型</option></select></label>
+          <label><span>知识场景</span><select id="scene"><option value="">全部场景</option><option>用</option><option>养</option><option>修</option><option>保</option></select></label>
+          <label><span>能源类型</span><select id="energyType"><option value="">全部能源类型</option><option>新能源</option><option>传统</option></select></label>
+        </div>
+        <div class="data-overview">
+          <div class="section-label"><span>知识库概览</span><i>实时</i></div>
+          <section class="stats" id="stats"></section>
+        </div>
+        <div class="local-note">
+          <span>盾</span>
+          <p><b>企业资料本地检索</b>回答保留原始文档、页码或工作表定位。</p>
+        </div>
+      </aside>
+
+      <section class="workspace">
+        <section class="hero-card">
+          <img src="/assets/smart-truck-hero.jpg" alt="蓝色智能重卡" />
+          <div class="hero-overlay"></div>
+          <div class="hero-content">
+            <span class="hero-eyebrow"><i></i> SMARTLINK KNOWLEDGE AI</span>
+            <h1>让每一次诊修<br />都有资料依据</h1>
+            <p>从企业文档、知识图谱和车辆案例中，快速定位答案与原始证据。</p>
+            <div class="hero-tags"><span>故障诊断</span><span>维修资料</span><span>零部件知识</span></div>
+          </div>
+        </section>
+
+        <div class="quick-row">
+          <span id="activeIntentLabel" class="quick-label">智能问答</span>
+          <div class="quick">
+            <button>BMS故障码怎么排查？</button>
+            <button>无法上高压可能是什么原因？</button>
+            <button>SAA38289有哪些图纸？</button>
+          </div>
+        </div>
+
+        <div id="conversation" class="conversation panel">
+          <div class="empty">
+            <span class="empty-icon">问</span>
+            <strong>你好，我是车辆知识助手</strong>
+            <p>输入故障现象、故障码或零部件名称，我会给出完整回答和可追溯的参考资料内容。</p>
+            <div><span>刹车片</span><span>无法上高压</span><span>BMS故障码</span></div>
+          </div>
+        </div>
+
+        <div class="ask-panel panel">
+          <div class="query-context-line">
+            <span>当前能力</span><b id="composerIntent">智能问答</b>
+            <button id="historyButton" type="button">最近记录</button>
+          </div>
+          <div class="desktop-mode-switch" role="group" aria-label="回答模式">
+            <button type="button" class="desktop-mode-option active" data-mode="fast">
+              <span class="mode-icon">⚡</span>
+              <span><b>快速问答</b><small>优先响应 · 日常查询</small></span>
+              <i></i>
+            </button>
+            <button type="button" class="desktop-mode-option" data-mode="deep">
+              <span class="mode-icon">◎</span>
+              <span><b>深度诊断</b><small>复杂故障 · 完整分析</small></span>
+              <i></i>
+            </button>
+          </div>
+          <form id="askForm">
+            <div class="question-field">
+              <span class="question-icon">⌕</span>
+              <textarea id="question" placeholder="描述车辆问题，例如：JH6刹车不灵敏怎么排查？" required></textarea>
+              <span class="input-hint">Enter 发送</span>
+            </div>
+            <button id="voiceButton" class="voice-button" type="button" title="语音输入">◉</button>
+            <button type="submit"><span>发送问题</span><i>➜</i></button>
+          </form>
+          <p class="answer-disclaimer">回答由企业知识库辅助生成，安全关键系统请以有效版维修手册为准</p>
+        </div>
+      </section>
+
+      <aside class="evidence panel">
+        <div class="evidence-heading">
+          <div><h2>知识依据</h2><p>回答关联的原始资料</p></div>
+          <span>可追溯</span>
+        </div>
+        <div class="tabs">
+          <button class="active" data-tab="sources">引用来源</button>
+          <button data-tab="attachments">相关资料</button>
+          <button data-tab="triples">知识关系</button>
+          <button data-tab="history">最近记录</button>
+        </div>
+        <div class="evidence-body">
+          <div id="sources" class="tab-panel"><div class="aside-empty"><span>文</span><p>回答后将在这里展示引用来源</p></div></div>
+          <div id="attachments" class="tab-panel hidden"></div>
+          <div id="triples" class="tab-panel hidden"></div>
+          <div id="history" class="tab-panel hidden"><div class="aside-empty"><span>史</span><p>正在读取最近查询</p></div></div>
+        </div>
+      </aside>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
