@@ -684,11 +684,12 @@ Page({
     try {
       const result = await api.request(`/api/vin?q=${encodeURIComponent(vin)}`);
       const labels = [
-        ["vin", "VIN"], ["chassis_no", "底盘号"], ["emission_type", "排放种类"], ["vehicle_series", "车系"],
+        ["vin", "VIN"], ["vehicle_type", "车辆类型"], ["chassis_no", "底盘号"], ["emission_type", "排放种类"], ["vehicle_series", "车系"],
         ["fuel_type", "燃料种类"], ["announcement_model", "公告型号"], ["factory_model_code", "车厂车型码"],
         ["rear_axle", "后桥"], ["tire_spec", "轮胎规格"], ["engine_type", "发动机类型"],
         ["engine_model", "发动机型号"], ["transmission_model", "变速箱型号"], ["offline_time", "下线时间"],
-        ["vehicle_note", "车型备注"], ["engine_name", "发动机名称"],
+        ["vehicle_note", "车型备注"], ["engine_name", "发动机名称"], ["device_app_version", "设备应用版本"],
+        ["mcu_version", "MCU版本"], ["sim_match", "SIM匹配型号"],
       ];
       const vinFields = result.found ? labels.map(([key, label]) => ({ label, value: key === "vin" ? result.vin : result.record[key] || "—" })) : [];
       const assistant = { id: nextMessageId(), role: "assistant", text: result.message, vinResult: true, vin: result.vin, vinFields, images: [], documents: [], references: [], relatedQuestions: [], diagnosis: null, canFeedback: false, loading: false };

@@ -23,6 +23,7 @@
 
 ```powershell
 python .\scripts\build_kb.py
+python .\scripts\import_vin_data.py --csv "你的VIN文件.csv"
 python .\scripts\build_task_index.py
 python .\scripts\doubao_vision_store.py
 .\scripts\start_vectorized.ps1

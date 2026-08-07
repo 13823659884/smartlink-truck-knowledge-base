@@ -178,17 +178,28 @@ def ensure_runtime_schema() -> None:
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS vin_records (
-              vin TEXT PRIMARY KEY, chassis_no TEXT DEFAULT '',
+              vin TEXT PRIMARY KEY, vehicle_type TEXT DEFAULT '',
+              chassis_no TEXT DEFAULT '',
               emission_type TEXT DEFAULT '', vehicle_series TEXT DEFAULT '',
               fuel_type TEXT DEFAULT '', announcement_model TEXT DEFAULT '',
               factory_model_code TEXT DEFAULT '', rear_axle TEXT DEFAULT '',
               tire_spec TEXT DEFAULT '', engine_type TEXT DEFAULT '',
               engine_model TEXT DEFAULT '', transmission_model TEXT DEFAULT '',
               offline_time TEXT DEFAULT '', vehicle_note TEXT DEFAULT '',
-              engine_name TEXT DEFAULT '', updated_at TEXT NOT NULL
+              engine_name TEXT DEFAULT '', device_app_version TEXT DEFAULT '',
+              mcu_version TEXT DEFAULT '', sim_match TEXT DEFAULT '',
+              updated_at TEXT NOT NULL
             )
             """
         )
+        vin_columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(vin_records)")
+        }
+        for name in ("vehicle_type", "device_app_version", "mcu_version", "sim_match"):
+            if name not in vin_columns:
+                connection.execute(
+                    f"ALTER TABLE vin_records ADD COLUMN {name} TEXT DEFAULT ''"
+                )
         connection.executemany(
             """
             INSERT OR IGNORE INTO query_intents
@@ -1720,10 +1731,11 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
         if not re.fullmatch(r"[A-HJ-NPR-Z0-9]{17}", vin):
             raise ValueError("请输入正确的17位VIN")
         fields = (
-            "chassis_no", "emission_type", "vehicle_series", "fuel_type",
+            "vehicle_type", "chassis_no", "emission_type", "vehicle_series", "fuel_type",
             "announcement_model", "factory_model_code", "rear_axle", "tire_spec",
             "engine_type", "engine_model", "transmission_model", "offline_time",
-            "vehicle_note", "engine_name",
+            "vehicle_note", "engine_name", "device_app_version", "mcu_version",
+            "sim_match",
         )
         values = [str(payload.get(field, "")).strip() for field in fields]
         with connect() as connection:

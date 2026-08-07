@@ -241,9 +241,9 @@ function renderEvidence(data) {
 
 function addVinResult(data) {
   const node = document.createElement("div"); node.className = "message assistant";
-  const labels = { vin: "VIN", chassis_no: "底盘号", emission_type: "排放种类", vehicle_series: "车系", fuel_type: "燃料种类", announcement_model: "公告型号", factory_model_code: "车厂车型码", rear_axle: "后桥", tire_spec: "轮胎规格", engine_type: "发动机类型", engine_model: "发动机型号", transmission_model: "变速箱型号", offline_time: "下线时间", vehicle_note: "车型备注", engine_name: "发动机名称" };
+  const labels = { vin: "VIN", vehicle_type: "车辆类型", chassis_no: "底盘号", emission_type: "排放种类", vehicle_series: "车系", fuel_type: "燃料种类", announcement_model: "公告型号", factory_model_code: "车厂车型码", rear_axle: "后桥", tire_spec: "轮胎规格", engine_type: "发动机类型", engine_model: "发动机型号", transmission_model: "变速箱型号", offline_time: "下线时间", vehicle_note: "车型备注", engine_name: "发动机名称", device_app_version: "设备应用版本", mcu_version: "MCU版本", sim_match: "SIM匹配型号" };
   const fields = data.record ? Object.entries(labels).map(([key, label]) => `<div class="vin-field"><small>${label}</small><b>${esc(key === "vin" ? data.vin : data.record[key] || "—")}</b></div>`).join("") : "";
-  node.innerHTML = `<div class="message-text"><div class="assistant-answer-header"><strong><i>VIN</i> 车辆静态信息</strong><span>${esc(data.vin)}</span></div>${data.found ? `<div class="vin-result">${fields}</div>` : `<div class="vin-empty">${esc(data.message)}<br>VIN查询接口已经就绪，导入车辆主数据后即可显示全部15项静态字段。</div>`}</div>`;
+  node.innerHTML = `<div class="message-text"><div class="assistant-answer-header"><strong><i>VIN</i> 车辆静态信息</strong><span>${esc(data.vin)}</span></div>${data.found ? `<div class="vin-result">${fields}</div>` : `<div class="vin-empty">${esc(data.message)}<br>VIN查询接口已经就绪，导入车辆主数据后即可显示完整车辆静态字段。</div>`}</div>`;
   appendMessageNode(node);
 }
 

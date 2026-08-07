@@ -95,6 +95,7 @@ SPN、FMI和P码不只依赖语义向量。`build_task_index.py` 会从资料中
 | 文件 | 作用 |
 |---|---|
 | `scripts/build_kb.py` | 解析资料、OCR、切片并建立 SQLite 索引 |
+| `scripts/import_vin_data.py` | 导入 VIN 主数据并生成 VIN 分类检索切片 |
 | `scripts/build_task_index.py` | 建立任务分类和结构化故障码索引 |
 | `scripts/task_router.py` | 识别查询任务并执行精确路由 |
 | `scripts/doubao_vision_store.py` | 建立文字多模态向量集合 |
@@ -143,19 +144,29 @@ DOUBAO_EMBEDDING_DIMENSIONS=2048
 python .\scripts\build_kb.py
 ```
 
-### 2. 建立任务分类与故障码索引
+### 2. 导入 VIN 主数据（可选）
+
+VIN CSV 保存在源码目录之外，默认字段包括 `car_vin`、车型、车系、发动机、变速箱、排放、版本和下线时间。导入器会校验 17 位 VIN、合并完全重复记录、写入精确查询表，并按车系和车辆类型生成可检索切片：
+
+```powershell
+python .\scripts\import_vin_data.py --csv "你的VIN文件.csv" --batch-size 10
+```
+
+完整 VIN 通过 SQLite 主键精确查询；向量切片用于按车型、发动机、变速箱和版本等条件进行语义检索。原始 VIN 文件、数据库和向量集合均不会提交到 GitHub。
+
+### 3. 建立任务分类与故障码索引
 
 ```powershell
 python .\scripts\build_task_index.py
 ```
 
-### 3. 建立文字向量
+### 4. 建立文字向量
 
 ```powershell
 python .\scripts\doubao_vision_store.py --workers 1 --batch-size 8 --timeout 90
 ```
 
-### 4. 建立 PDF 页面和图片向量
+### 5. 建立 PDF 页面和图片向量
 
 ```powershell
 python .\scripts\doubao_pdf_page_store.py --workers 1 --batch-size 2
@@ -164,7 +175,7 @@ python .\scripts\doubao_image_store.py --workers 1 --batch-size 4
 
 向量构建脚本支持增量处理和中断续跑。已经存在的唯一 ID 会被跳过，只处理新增或缺失内容。低并发参数可减少云端向量接口的限流风险。
 
-### 5. 同步任务标签
+### 6. 同步任务标签
 
 ```powershell
 python .\scripts\apply_task_metadata.py `

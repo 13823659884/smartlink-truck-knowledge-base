@@ -163,6 +163,7 @@ CREATE TABLE IF NOT EXISTS query_intents (
 
 CREATE TABLE IF NOT EXISTS vin_records (
   vin TEXT PRIMARY KEY,
+  vehicle_type TEXT DEFAULT '',
   chassis_no TEXT DEFAULT '',
   emission_type TEXT DEFAULT '',
   vehicle_series TEXT DEFAULT '',
@@ -177,5 +178,8 @@ CREATE TABLE IF NOT EXISTS vin_records (
   offline_time TEXT DEFAULT '',
   vehicle_note TEXT DEFAULT '',
   engine_name TEXT DEFAULT '',
+  device_app_version TEXT DEFAULT '',
+  mcu_version TEXT DEFAULT '',
+  sim_match TEXT DEFAULT '',
   updated_at TEXT NOT NULL
 );
