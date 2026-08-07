@@ -231,7 +231,10 @@
 }
 .mode-switch {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 6rpx;
   margin-bottom: 10rpx;
   padding: 6rpx;
@@ -243,6 +246,9 @@
   align-items: center;
   justify-content: center;
   gap: 8rpx;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   margin: 0;
   height: 58rpx;
   padding: 0 10rpx;
@@ -253,7 +259,7 @@
   background: transparent;
   font-size: 21rpx;
   font-weight: 700;
-  line-height: 58rpx;
+  line-height: 1;
 }
 .mode-option.active {
   color: #0877d1;
@@ -630,7 +636,7 @@
   min-width: 0;
   box-sizing: border-box;
   gap: 14rpx;
-  align-items: end;
+  align-items: center;
 }
 .input-box textarea {
   width: 0;
@@ -640,14 +646,17 @@
   flex: 1 1 auto;
   box-sizing: border-box;
   margin: 0;
-  padding: 17rpx 20rpx;
+  padding: 19rpx 20rpx;
   border: 1rpx solid #e1e6ec;
   border-radius: 20rpx;
   background: #f7f9fb;
   font-size: 24rpx;
-  line-height: 1.45;
+  line-height: 36rpx;
 }
 .send-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 108rpx;
   height: 76rpx;
   flex: 0 0 108rpx;
@@ -659,6 +668,7 @@
   border-radius: 20rpx;
   font-size: 23rpx;
   font-weight: 700;
+  line-height: 1;
 }
 .send-button[disabled] {
   color: #fff;
@@ -683,15 +693,15 @@
 }
 
 .capability-scroll,
-.recent-scroll { width: 100%; white-space: nowrap; }
+.recent-scroll { display: block; width: 100%; min-width: 0; box-sizing: border-box; white-space: nowrap; }
 .capability-list,
-.recent-list { display: inline-flex; gap: 12rpx; padding: 2rpx 2rpx 12rpx; }
+.recent-list { display: inline-flex; box-sizing: border-box; gap: 12rpx; padding: 2rpx 28rpx 12rpx 2rpx; }
 .capability-card { width: 126rpx; height: 104rpx; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8rpx; margin: 0; padding: 0; border: 1rpx solid #e3e9ef; border-radius: 20rpx; color: #657386; background: #fff; font-size: 20rpx; }
 .capability-card text:first-child { width: 44rpx; height: 44rpx; display: flex; align-items: center; justify-content: center; border-radius: 14rpx; color: #fff; background: linear-gradient(145deg,#348cdb,#0a62b5); font-weight: 800; }
 .capability-card.active { color: #075da8; border-color: #72b4ef; background: #eef7ff; box-shadow: inset 0 -5rpx #1684de; font-weight: 700; }
 .tap-card-active { background: #e5f3ff; transform: scale(0.97); }
 .recent-heading { margin-top: 20rpx; }
-.recent-card { width: 276rpx; margin: 0; padding: 18rpx; border: 1rpx solid #e6ebf0; border-radius: 20rpx; background: #fff; text-align: left; }
+.recent-card { display: flex; width: 276rpx; min-width: 0; flex: 0 0 276rpx; box-sizing: border-box; flex-direction: column; justify-content: center; margin: 0; padding: 18rpx; border: 1rpx solid #e6ebf0; border-radius: 20rpx; background: #fff; text-align: left; }
 .recent-card text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #26384d; font-size: 22rpx; }
 .recent-card text:last-child { margin-top: 8rpx; color: #8a96a5; font-size: 18rpx; }
 .quick-example-grid { margin-top: 10rpx; }
@@ -751,7 +761,7 @@
 .vin-field text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #263a51; font-size: 21rpx; }
 .vin-field text:first-child { margin-bottom: 6rpx; color: #8793a2; font-size: 17rpx; }
 .vin-empty { display: block; padding: 18rpx; border-radius: 16rpx; color: #875a16; background: #fff6df; font-size: 21rpx; line-height: 1.75; }
-.voice-input-button { width: 72rpx; height: 76rpx; flex: 0 0 72rpx; box-sizing: border-box; margin: 0; padding: 0; border: 1rpx solid #d7e4ef; border-radius: 20rpx; color: #1769a8; background: #f1f7fb; font-size: 19rpx; }
+.voice-input-button { display: flex; width: 72rpx; height: 76rpx; flex: 0 0 72rpx; box-sizing: border-box; align-items: center; justify-content: center; margin: 0; padding: 0; border: 1rpx solid #d7e4ef; border-radius: 20rpx; color: #1769a8; background: #f1f7fb; font-size: 19rpx; line-height: 1; }
 .composer-tools text {
   max-width: 240rpx;
   overflow: hidden;
