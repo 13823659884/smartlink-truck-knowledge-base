@@ -88,6 +88,38 @@ function retrievalSummary(data) {
   };
 }
 
+function openKnowledgeDocument(url, fileName) {
+  if (!url) {
+    wx.showToast({ title: "该资料暂无可用链接", icon: "none" });
+    return;
+  }
+  wx.showLoading({ title: "正在打开资料" });
+  wx.downloadFile({
+    url,
+    timeout: 120000,
+    success(response) {
+      if (response.statusCode !== 200) {
+        wx.showToast({ title: "资料下载失败", icon: "none" });
+        return;
+      }
+      wx.openDocument({
+        filePath: response.tempFilePath,
+        fileName: fileName || "资料",
+        showMenu: true,
+        fail() {
+          wx.showToast({ title: "该格式暂不支持预览", icon: "none" });
+        },
+      });
+    },
+    fail() {
+      wx.showToast({ title: "无法下载资料", icon: "none" });
+    },
+    complete() {
+      wx.hideLoading();
+    },
+  });
+}
+
 Page({
   data: {
     statusBarHeight: 20,
@@ -136,10 +168,10 @@ Page({
     ],
     recentHistory: [],
     quickQuestions: [
-      { icon: "诊", title: "故障诊断", question: "无法上高压怎么排查？" },
-      { icon: "养", title: "维护保养", question: "变速箱怎么保养？" },
-      { icon: "码", title: "故障码", question: "BMS故障码怎么排查？" },
-      { icon: "制", title: "制动系统", question: "刹车片磨损怎么检查？" },
+      { icon: "诊", title: "故障诊断", intent: "symptom", question: "无法上高压怎么排查？" },
+      { icon: "养", title: "维护保养", intent: "maintenance", question: "变速箱怎么保养？" },
+      { icon: "码", title: "故障码", intent: "fault", question: "BMS故障码怎么排查？" },
+      { icon: "制", title: "制动系统", intent: "symptom", question: "刹车片磨损怎么检查？" },
     ],
     messages: [
       {
@@ -331,7 +363,17 @@ Page({
   },
 
   askQuick(event) {
-    this.ask(event.currentTarget.dataset.question);
+    const question = event.currentTarget.dataset.question;
+    const intent = event.currentTarget.dataset.intent || "all";
+    const capability = this.data.capabilityOptions.find((item) => item.id === intent);
+    const sceneIndex = capability && capability.scene
+      ? Math.max(0, this.data.sceneOptions.indexOf(capability.scene))
+      : this.data.sceneIndex;
+    this.setData({
+      activeIntent: intent,
+      activeCapability: capability ? capability.name : "智能问答",
+      sceneIndex,
+    }, () => this.ask(question));
   },
 
   askRelated(event) {
@@ -569,7 +611,7 @@ Page({
       }));
       const references = (
         result.reference_materials || result.sources || []
-      ).slice(0, 10).map((item, index) => ({
+      ).slice(0, 12).map((item, index) => ({
         key: `${item.file_name || "资料"}-${item.source_locator || index}`,
         index: index + 1,
         fileName: item.file_name,
@@ -657,40 +699,26 @@ Page({
     }
   },
 
-  jumpReference(event) {
+  openCitation(event) {
     const messageId = event.currentTarget.dataset.messageId;
-    const index = event.currentTarget.dataset.index;
-    this.setData({ scrollIntoView: `source-${messageId}-${index}` });
+    const citationIndex = Number(event.currentTarget.dataset.index);
+    const message = this.data.messages.find(
+      (item) => String(item.id) === String(messageId),
+    );
+    const reference = message && message.references
+      ? message.references.find((item) => Number(item.index) === citationIndex)
+      : null;
+    if (!reference) {
+      wx.showToast({ title: "未找到对应资料链接", icon: "none" });
+      return;
+    }
+    openKnowledgeDocument(reference.fileUrl, reference.fileName);
   },
 
   openDocument(event) {
     const url = event.currentTarget.dataset.url;
     const fileName = event.currentTarget.dataset.name || "资料";
-    wx.showLoading({ title: "正在打开资料" });
-    wx.downloadFile({
-      url,
-      timeout: 120000,
-      success(response) {
-        if (response.statusCode !== 200) {
-          wx.showToast({ title: "资料下载失败", icon: "none" });
-          return;
-        }
-        wx.openDocument({
-          filePath: response.tempFilePath,
-          fileName,
-          showMenu: true,
-          fail() {
-            wx.showToast({ title: "该格式暂不支持预览", icon: "none" });
-          },
-        });
-      },
-      fail() {
-        wx.showToast({ title: "无法下载资料", icon: "none" });
-      },
-      complete() {
-        wx.hideLoading();
-      },
-    });
+    openKnowledgeDocument(url, fileName);
   },
 
   async sendFeedback(event) {

@@ -369,6 +369,7 @@ def search_knowledge_base(
     candidate_limit: int = 240,
     semantic_limit: int = 80,
     rrf_k: int = 60,
+    task_type_override: str = "",
 ) -> dict[str, Any]:
     retrieval_started = time.perf_counter()
     question = normalize_text(question)
@@ -377,7 +378,15 @@ def search_knowledge_base(
     connection = sqlite3.connect(database_path)
     connection.row_factory = sqlite3.Row
     try:
-        task_type = detect_task_type(question)
+        allowed_task_types = {
+            "vin", "fault_code", "symptom_diagnosis", "usage", "maintenance",
+            "warranty", "service_technical", "drawing", "claim_case", "general",
+        }
+        task_type = (
+            task_type_override
+            if task_type_override in allowed_task_types
+            else detect_task_type(question)
+        )
         exact_fault_matches = exact_fault_sources(question)
         if exact_fault_matches:
             total_ms = round((time.perf_counter() - retrieval_started) * 1000, 2)

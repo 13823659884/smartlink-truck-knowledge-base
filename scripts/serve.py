@@ -83,6 +83,18 @@ DEFAULT_QUERY_INTENTS = (
 )
 INTENT_SCENES = {item[0]: item[2] for item in DEFAULT_QUERY_INTENTS}
 PROFESSIONAL_INTENTS = {"vin", "fault", "symptom", "usage", "maintenance", "warranty"}
+INTENT_TASK_TYPES = {
+    "vin": "vin",
+    "fault": "fault_code",
+    "symptom": "symptom_diagnosis",
+    "usage": "usage",
+    "maintenance": "maintenance",
+    "warranty": "warranty",
+}
+VALID_TASK_TYPES = {
+    "vin", "fault_code", "symptom_diagnosis", "usage", "maintenance",
+    "warranty", "service_technical", "drawing", "claim_case", "general",
+}
 PROFESSIONAL_MARKERS = (
     "车辆", "卡车", "轻卡", "重卡", "货车", "解放", "发动机", "变速箱", "离合器",
     "制动", "刹车", "故障码", "故障灯", "维修", "检修", "保养", "保用", "索赔",
@@ -99,6 +111,13 @@ def question_scope(question: str, intent: str, scene: str) -> str:
     if any(marker.lower() in normalized for marker in PROFESSIONAL_MARKERS):
         return "professional"
     return "general"
+
+
+def task_type_for_payload(payload: dict[str, object]) -> str:
+    explicit = str(payload.get("task_type", "")).strip()
+    if explicit in VALID_TASK_TYPES:
+        return explicit
+    return INTENT_TASK_TYPES.get(str(payload.get("intent", "")).strip(), "")
 
 
 def general_retrieval_result(
@@ -235,6 +254,7 @@ def cached_retrieval(
     scene: str,
     energy_type: str,
     context: str,
+    task_type_override: str = "",
 ) -> tuple[dict[str, object], bool]:
     if RETRIEVAL_BACKEND not in {"sqlite_hybrid", "qdrant_hybrid"}:
         raise RuntimeError(f"尚未配置检索后端：{RETRIEVAL_BACKEND}")
@@ -245,6 +265,7 @@ def cached_retrieval(
         scene,
         energy_type,
         context,
+        task_type_override,
         CANDIDATE_LIMIT,
         SEMANTIC_LIMIT,
         RRF_K,
@@ -269,6 +290,7 @@ def cached_retrieval(
         candidate_limit=CANDIDATE_LIMIT,
         semantic_limit=(SEMANTIC_LIMIT if RETRIEVAL_BACKEND == "qdrant_hybrid" else 0),
         rrf_k=RRF_K,
+        task_type_override=task_type_override,
     )
     with RETRIEVAL_CACHE_LOCK:
         RETRIEVAL_CACHE[key] = (now, copy.deepcopy(result))
@@ -998,6 +1020,7 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
                 scene,
                 energy_type,
                 context,
+                task_type_for_payload(payload),
             )
         else:
             result, cache_hit = (
@@ -1294,6 +1317,7 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
                     scene,
                     energy_type,
                     context,
+                    task_type_for_payload(payload),
                 )
             else:
                 result, cache_hit = (

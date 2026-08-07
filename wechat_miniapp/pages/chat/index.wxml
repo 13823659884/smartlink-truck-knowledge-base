@@ -68,13 +68,16 @@
         </view>
         <scroll-view class="capability-scroll" scroll-x show-scrollbar="{{false}}">
           <view class="capability-list">
-            <button
+            <view
               wx:for="{{capabilityOptions}}"
               wx:key="id"
               class="capability-card {{activeIntent === item.id ? 'active' : ''}}"
+              hover-class="tap-card-active"
+              hover-stay-time="90"
+              role="button"
               data-id="{{item.id}}"
               bindtap="selectCapability"
-            ><text>{{item.icon}}</text><text>{{item.name}}</text></button>
+            ><text>{{item.icon}}</text><text>{{item.name}}</text></view>
           </view>
         </scroll-view>
         <view class="section-heading recent-heading" wx:if="{{recentHistory.length}}">
@@ -88,16 +91,20 @@
           </view>
         </scroll-view>
         <view class="quick-grid quick-example-grid">
-          <button
+          <view
             class="quick-card"
             wx:for="{{quickQuestions}}"
             wx:key="question"
+            hover-class="quick-card-pressed"
+            hover-stay-time="100"
+            role="button"
             data-question="{{item.question}}"
+            data-intent="{{item.intent}}"
             bindtap="askQuick"
           >
             <text class="quick-icon">{{item.icon}}</text>
             <text class="quick-title">{{item.title}}</text>
-          </button>
+          </view>
         </view>
       </view>
 
@@ -124,18 +131,18 @@
                 <view class="answer-block-title"><text>01</text><text>分析与结论</text></view>
                 <view wx:for="{{item.answerParagraphs}}" wx:for-item="paragraph" wx:key="index" class="answer-paragraph">
                   <text>{{paragraph.text}}</text>
-                  <button wx:for="{{paragraph.citations}}" wx:for-item="citation" wx:key="*this" class="citation-chip" data-message-id="{{item.id}}" data-index="{{citation}}" catchtap="jumpReference">【资料{{citation}}】</button>
+                  <button wx:for="{{paragraph.citations}}" wx:for-item="citation" wx:key="*this" class="citation-chip" data-message-id="{{item.id}}" data-index="{{citation}}" catchtap="openCitation">【资料{{citation}}】</button>
                 </view>
               </view>
               <view wx:if="{{item.solutionSteps.length}}" class="answer-block">
                 <view class="answer-block-title"><text>02</text><text>处理步骤</text></view>
                 <view wx:for="{{item.solutionSteps}}" wx:for-item="step" wx:key="index" class="answer-step">
-                  <text class="step-number">{{index + 1}}</text><view><text>{{step.text}}</text><button wx:for="{{step.citations}}" wx:for-item="citation" wx:key="*this" class="citation-chip" data-message-id="{{item.id}}" data-index="{{citation}}" catchtap="jumpReference">【资料{{citation}}】</button></view>
+                  <text class="step-number">{{index + 1}}</text><view><text>{{step.text}}</text><button wx:for="{{step.citations}}" wx:for-item="citation" wx:key="*this" class="citation-chip" data-message-id="{{item.id}}" data-index="{{citation}}" catchtap="openCitation">【资料{{citation}}】</button></view>
                 </view>
               </view>
               <view wx:if="{{item.safetyContent.text}}" class="answer-block safety-block">
                 <view class="answer-block-title"><text>03</text><text>安全提示</text></view>
-                <view class="answer-paragraph"><text>{{item.safetyContent.text}}</text><button wx:for="{{item.safetyContent.citations}}" wx:for-item="citation" wx:key="*this" class="citation-chip" data-message-id="{{item.id}}" data-index="{{citation}}" catchtap="jumpReference">【资料{{citation}}】</button></view>
+                <view class="answer-paragraph"><text>{{item.safetyContent.text}}</text><button wx:for="{{item.safetyContent.citations}}" wx:for-item="citation" wx:key="*this" class="citation-chip" data-message-id="{{item.id}}" data-index="{{citation}}" catchtap="openCitation">【资料{{citation}}】</button></view>
               </view>
             </view>
             <view wx:elif="{{item.vinResult}}" class="vin-card">
@@ -183,27 +190,18 @@
               >{{question}}</button>
             </view>
 
-            <view wx:if="{{item.references.length}}" class="reference-section">
-              <view class="attachment-title">引用来源（{{item.references.length}}）</view>
-              <view
-                wx:for="{{item.references}}"
-                wx:for-item="reference"
-                wx:key="key"
-                class="reference-card"
-                id="source-{{item.id}}-{{reference.index}}"
-                data-url="{{reference.fileUrl}}"
-                data-name="{{reference.fileName}}"
-                bindtap="openDocument"
-              >
-                <view class="reference-head">
-                  <view class="document-icon">文</view>
-                  <view class="document-copy">
-                    <text>{{reference.fileName}}</text>
-                    <text>{{reference.sourceLocator}}</text>
-                  </view>
-                  <text class="document-arrow">›</text>
-                </view>
-                <text class="reference-excerpt">{{reference.excerpt}}</text>
+            <view wx:if="{{item.references.length}}" class="source-link-section">
+              <text class="source-link-label">参考资料</text>
+              <view class="source-link-list">
+                <button
+                  wx:for="{{item.references}}"
+                  wx:for-item="reference"
+                  wx:key="key"
+                  class="source-link"
+                  data-url="{{reference.fileUrl}}"
+                  data-name="{{reference.fileName}}"
+                  bindtap="openDocument"
+                >资料{{reference.index}} ↗</button>
               </view>
             </view>
 

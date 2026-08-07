@@ -305,6 +305,8 @@
   justify-content: flex-start;
   gap: 14rpx;
   min-width: 0;
+  min-height: 82rpx;
+  box-sizing: border-box;
   margin: 0;
   padding: 14rpx 16rpx;
   text-align: left;
@@ -312,6 +314,11 @@
   border-radius: 20rpx;
   background: #fff;
   box-shadow: 0 5rpx 18rpx #25384f09;
+}
+.quick-card-pressed {
+  border-color: #7bbdf3;
+  background: #edf7ff;
+  transform: scale(0.98);
 }
 .quick-icon {
   display: flex;
@@ -354,6 +361,9 @@
 }
 .message-row {
   display: flex;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   align-items: flex-start;
   gap: 14rpx;
 }
@@ -364,18 +374,28 @@
   flex: 0 0 auto;
   width: 58rpx;
   height: 58rpx;
+  box-sizing: border-box;
   border: 1rpx solid #cfe8ff;
   border-radius: 18rpx;
   font-size: 22rpx;
 }
 .message-bubble {
+  min-width: 0;
   max-width: calc(100% - 72rpx);
+  box-sizing: border-box;
+  overflow: hidden;
   padding: 20rpx 22rpx;
   border-radius: 6rpx 24rpx 24rpx 24rpx;
   background: #fff;
   box-shadow: 0 4rpx 18rpx #11111110;
 }
+.assistant .message-bubble {
+  width: calc(100% - 72rpx);
+  flex: 1 1 auto;
+}
 .user .message-bubble {
+  width: auto;
+  max-width: 86%;
   color: #fff;
   background: #199aff;
   border-radius: 24rpx 6rpx 24rpx 24rpx;
@@ -657,6 +677,7 @@
 .capability-card { width: 126rpx; height: 104rpx; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8rpx; margin: 0; padding: 0; border: 1rpx solid #e3e9ef; border-radius: 20rpx; color: #657386; background: #fff; font-size: 20rpx; }
 .capability-card text:first-child { width: 44rpx; height: 44rpx; display: flex; align-items: center; justify-content: center; border-radius: 14rpx; color: #fff; background: linear-gradient(145deg,#348cdb,#0a62b5); font-weight: 800; }
 .capability-card.active { color: #075da8; border-color: #72b4ef; background: #eef7ff; box-shadow: inset 0 -5rpx #1684de; font-weight: 700; }
+.tap-card-active { background: #e5f3ff; transform: scale(0.97); }
 .recent-heading { margin-top: 20rpx; }
 .recent-card { width: 276rpx; margin: 0; padding: 18rpx; border: 1rpx solid #e6ebf0; border-radius: 20rpx; background: #fff; text-align: left; }
 .recent-card text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #26384d; font-size: 22rpx; }
@@ -672,7 +693,42 @@
 .answer-block-title { display: grid; grid-template-columns: 44rpx minmax(0, 1fr); align-items: center; gap: 12rpx; margin-bottom: 14rpx; color: #18283c; font-size: 24rpx; font-weight: 800; }
 .answer-block-title text:first-child { width: 44rpx; min-width: 44rpx; height: 36rpx; display: flex; align-items: center; justify-content: center; box-sizing: border-box; border-radius: 10rpx; color: #fff; background: #df2929; font-size: 16rpx; line-height: 36rpx; text-align: center; }
 .answer-paragraph { margin: 12rpx 0; color: #405168; font-size: 23rpx; line-height: 1.85; }
+.answer-paragraph,
+.answer-step,
+.message-text { overflow-wrap: anywhere; word-break: break-word; }
 .citation-chip { display: inline-flex; width: auto; min-width: 0; margin: 0 3rpx; padding: 1rpx 8rpx; border: 1rpx solid #d7e2eb; border-radius: 999rpx; color: #315c82; background: #f6f9fb; font-size: 17rpx; line-height: 1.65; vertical-align: 2rpx; }
+.source-link-section {
+  display: flex;
+  align-items: flex-start;
+  gap: 12rpx;
+  margin-top: 20rpx;
+  padding-top: 15rpx;
+  border-top: 1rpx solid #edf1f4;
+}
+.source-link-label {
+  flex: 0 0 auto;
+  padding-top: 7rpx;
+  color: #7d8996;
+  font-size: 18rpx;
+}
+.source-link-list {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 8rpx;
+}
+.source-link {
+  width: auto;
+  min-width: 0;
+  margin: 0;
+  padding: 6rpx 11rpx;
+  border: 1rpx solid #d6e3ee;
+  border-radius: 999rpx;
+  color: #176ba9;
+  background: #f5f9fc;
+  font-size: 17rpx;
+  line-height: 1.4;
+}
 .answer-step { display: grid; grid-template-columns: 38rpx 1fr; gap: 10rpx; margin: 14rpx 0; color: #405168; font-size: 23rpx; line-height: 1.8; }
 .step-number { width: 36rpx; height: 36rpx; display: flex; align-items: center; justify-content: center; border-radius: 50%; color: #126fc0; background: #eaf4fd; font-size: 18rpx; font-weight: 800; }
 .safety-block { padding: 16rpx; border: 1rpx solid #f7d6d6; border-radius: 18rpx; background: #fff8f7; }
