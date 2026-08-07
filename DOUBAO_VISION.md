@@ -26,8 +26,8 @@ python scripts/serve_doubao_vision.py
 
 ```text
 DOUBAO_EMBEDDING_API_KEY=...
-DOUBAO_EMBEDDING_URL=https://ark.cn-beijing.volces.com/api/plan/v3/embeddings/multimodal
-DOUBAO_EMBEDDING_MODEL=doubao-embedding-vision
+DOUBAO_EMBEDDING_URL=https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal
+DOUBAO_EMBEDDING_MODEL=doubao-embedding-vision-250615
 DOUBAO_EMBEDDING_DIMENSIONS=2048
 DOUBAO_VISION_QDRANT_PATH=output/qdrant_doubao_vision
 DOUBAO_VISION_QDRANT_COLLECTION=truck_knowledge_chunks_doubao_vision

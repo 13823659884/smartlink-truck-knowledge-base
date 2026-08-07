@@ -129,8 +129,8 @@ ARK_FAST_MODEL=doubao-seed-2-0-lite-260215
 ARK_DEEP_MODEL=kimi-k3
 
 DOUBAO_EMBEDDING_API_KEY=你的向量模型密钥
-DOUBAO_EMBEDDING_URL=https://ark.cn-beijing.volces.com/api/plan/v3/embeddings/multimodal
-DOUBAO_EMBEDDING_MODEL=doubao-embedding-vision
+DOUBAO_EMBEDDING_URL=https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal
+DOUBAO_EMBEDDING_MODEL=doubao-embedding-vision-250615
 DOUBAO_EMBEDDING_DIMENSIONS=2048
 ```
 

@@ -22,7 +22,7 @@ query_kb.semantic_search = doubao_vision_store.semantic_search
 serve.semantic_search = doubao_vision_store.semantic_search
 serve.PORT = int(os.getenv("DOUBAO_VISION_PORT", "8009"))
 
-_VECTOR_STATE = {"ready": False, "loading": True, "error": ""}
+_VECTOR_STATE = {"ready": False, "loading": True, "error": "", "points": 0}
 
 
 def vector_status() -> dict[str, object]:
@@ -36,7 +36,7 @@ def vector_status() -> dict[str, object]:
             "collection": config["collection"],
             "model": config["model"],
             "dimensions": config["dimensions"],
-            "points": 95252,
+            "points": int(_VECTOR_STATE["points"]),
         }
     return doubao_vision_store.status()
 
@@ -61,6 +61,16 @@ def main() -> int:
         print("知识库尚未构建，请先运行 scripts/build_kb.py", file=sys.stderr)
         return 2
     serve.ensure_runtime_schema()
+    with serve.connect() as connection:
+        _VECTOR_STATE["points"] = int(
+            connection.execute(
+                """
+                SELECT COUNT(*) FROM chunks c
+                JOIN documents d ON d.id = c.document_id
+                WHERE d.enabled = 1
+                """
+            ).fetchone()[0]
+        )
     server = serve.ThreadingHTTPServer((serve.HOST, serve.PORT), serve.KnowledgeHandler)
     threading.Thread(
         target=warm_vector_runtime,
