@@ -1,5 +1,6 @@
 {
   "name": "中重卡用养修保专有知识库",
+  "primary_runtime": "doubao_multimodal_vector",
   "source_root": "../0729中重卡知识库素材",
   "graph_output": "../knowledge_graph/output",
   "output_dir": "output",
@@ -19,6 +20,20 @@
     "cache_ttl_seconds": 600,
     "performance_sample_size": 500,
     "preview_warm_workers": 2
+  },
+  "multimodal_retrieval": {
+    "backend": "qdrant_hybrid",
+    "qdrant_path": "output/qdrant_doubao_vision",
+    "qdrant_collection": "truck_knowledge_chunks_doubao_vision",
+    "embedding_url": "https://ark.cn-beijing.volces.com/api/plan/v3/embeddings/multimodal",
+    "embedding_model": "doubao-embedding-vision",
+    "embedding_dimensions": 2048,
+    "semantic_limit": 80,
+    "task_filter_enabled": true,
+    "pdf_page_path": "output/qdrant_doubao_pdf_pages",
+    "pdf_page_collection": "truck_knowledge_pdf_pages_doubao_vision",
+    "image_path": "output/qdrant_doubao_images",
+    "image_collection": "truck_knowledge_images_doubao_vision"
   },
   "ocr": {
     "enabled": true,

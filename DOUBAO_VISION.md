@@ -1,5 +1,7 @@
 # 豆包多模态镜像向量库
 
+> 当前该版本已升级为项目主版本。2026-08-07的完整处理结果为：文字95,252条、PDF页面21,840条、独立图片312条、任务标签95,252条，失败项0。
+
 该版本在原有 BGE/Qdrant 知识库之外，单独创建 `truck_knowledge_chunks_doubao_vision` 集合，使用 `doubao-embedding-vision` 生成 2048 维向量。原集合、SQLite 切片和原版问答服务不会被覆盖。
 
 ## 构建镜像向量
@@ -46,3 +48,17 @@ python scripts/doubao_pdf_page_store.py --workers 4 --batch-size 4
 ```
 
 PDF 页面单独写入 `truck_knowledge_pdf_pages_doubao_vision` 集合，任务支持断点续跑。
+
+## 任务分类与精确故障码
+
+```powershell
+python scripts/build_task_index.py
+```
+
+该步骤为全部切片建立十类任务标签，并将SPN/FMI整理到独立精确索引。分类结果保存在本地`output/task_index.db`，不会上传GitHub。
+
+向量完成后可直接补写Qdrant payload，无需重新调用向量API：
+
+```powershell
+python scripts/apply_task_metadata.py --path output/qdrant_doubao_vision --collection truck_knowledge_chunks_doubao_vision
+```

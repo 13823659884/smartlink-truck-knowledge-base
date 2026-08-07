@@ -1,178 +1,198 @@
-# 中重卡用养修保知识库与知识图谱
+# 鱼快创领中重卡智能知识库（豆包多模态向量版）
 
-本目录依据《车辆知识问答助手产品方案说明》搭建，包含两类可直接使用的数据能力：
+本项目是面向中重卡、轻卡用车、保养、维修、保用与故障诊断场景的本地 RAG 问答系统。当前主版本使用火山方舟 `doubao-embedding-vision` 对文字、PDF 页面和独立图片分别建立 2,048 维向量索引，并通过任务分类、关键词检索、语义检索、知识图谱与大模型生成组合回答。
 
-1. **专有知识库**：解析 `0729中重卡知识库素材` 下的 PDF、Word、PPT 和 Excel 文档，按车系、用/养/修/保、燃料类型、版本及来源位置建立 SQLite 全文索引和 Qdrant 中文语义向量索引。
-2. **知识图谱**：将 `knowledge_graph/output` 中的实体和关系导入 SQLite，并以标准三元组 `主体—关系—客体` 提供查询。
+原有 BGE 向量库和 8008 服务仍保留作为兼容回退，不会被豆包向量库覆盖。
 
-## 目录
+## 当前处理规模
 
-- `config.json`：知识库、车系和场景配置。
-- `schema.sql`：文档、分块、向量、实体、三元组、会话和纠偏记录的数据模型。
-- `scripts/build_kb.py`：可重复构建脚本；按文件内容哈希复用解析结果。
-- `scripts/query_kb.py`：命令行混合检索与图谱查询。
-- `scripts/qdrant_store.py`：使用本地 BGE 中文向量模型构建、增量同步和查询 Qdrant。
-- `scripts/serve.py`：本地知识问答与管理接口。
-- `scripts/doubao_client.py`：火山方舟智能体适配器，只把检索到的企业证据发送给模型。
-- `scripts/source_preview.py`：为命中的 PDF 页、PPTX 幻灯片和文档图片生成受控预览。
-- `scripts/ocr_engine.py`：使用本地 RapidOCR ONNX 识别扫描 PDF 和用户上传图片。
-- `scripts/diagnosis.py`：故障码提取、证据充足度和引导式诊断卡片。
-- `web/`：本地问答界面。
-- `output/knowledge_base.db`：构建后的知识库数据库。
-- `output/build_report.json`：构建质量报告。
-- `output/extraction_cache/`：文档解析缓存；文件内容不变时不会重复解析。
-- `output/unparsed_files.csv`：需 OCR 或格式转换的文件清单。
-- `output/triples.csv`：标准三元组导出。
+截至 2026-08-07，本地完整数据处理结果如下：
 
-## 构建
+| 数据类型 | 已完成 | 状态 |
+|---|---:|---|
+| 启用知识切片 | 95,252 | 已完成 |
+| 豆包文字向量 | 95,252 | 已完成，2,048 维 |
+| PDF 文件 | 210 | 已完成 |
+| PDF 页面向量 | 21,840 | 已完成，2,048 维 |
+| 独立图片向量 | 312 | 已完成，2,048 维 |
+| 任务分类标签 | 95,252 | 已完成 |
+| 结构化 SPN/FMI 记录 | 1,234 | 已完成 |
+| 最终失败项 | 0 | 全部补跑成功 |
+
+生成后的数据库、向量集合、原始资料、日志和 API Key 不上传 GitHub。克隆项目后需要准备自己的资料和模型密钥重新构建，或挂载已有的 `output/` 目录。
+
+## 系统流程
+
+```text
+PDF / Word / Excel / PPT / 图片
+              ↓
+      文档解析、OCR、切片
+              ↓
+    任务分类 + SPN/FMI结构化
+              ↓
+┌─────────────┼──────────────────┐
+│             │                  │
+文字向量       PDF页面视觉向量      独立图片视觉向量
+95,252         21,840             312
+│             │                  │
+└─────────────┼──────────────────┘
+              ↓
+任务路由 → 精确查询 / 分类向量检索 / FTS5 / 图谱
+              ↓
+    豆包快速问答或 Kimi K3 深度诊断
+              ↓
+答案 + 分段引用 + 原文页码 + 连续追问
+```
+
+## 任务分类
+
+系统不会把全部资料混在一起盲目召回，而是先识别用户任务，再进入对应知识分区：
+
+| 任务类型 | 用途 |
+|---|---|
+| `vin` | VIN 车辆静态信息精确查询 |
+| `fault_code` | P码、SPN、FMI 和控制器故障码查询 |
+| `symptom_diagnosis` | 异响、动力不足、无法启动等症状诊断 |
+| `usage` | 用车与驾驶操作知识 |
+| `maintenance` | 保养项目、周期与油液规格 |
+| `warranty` | 保用、保修与索赔规则 |
+| `service_technical` | 服务技术文件和技术通知 |
+| `drawing` | 电路图、原理图和维修图纸 |
+| `claim_case` | 维修及索赔案例，仅作为补充证据 |
+| `general` | 未归入专用任务的通用资料 |
+
+故障码采用专用结构化索引。例如只输入 `SPN1172` 时，系统直接返回其 FMI 2、3、4、10 等全部已知定义，不再让数字与里程、VIN片段或索赔单号混搜。精确命中时会跳过全库向量检索。
+
+## 主要目录
+
+- `scripts/build_kb.py`：解析资料并建立 SQLite、FTS5、图谱和原兼容索引。
+- `scripts/build_task_index.py`：为全部切片建立任务分类，并抽取 SPN/FMI 字典。
+- `scripts/task_router.py`：识别查询任务，执行故障码精确路由。
+- `scripts/doubao_vision_store.py`：建立豆包文字镜像向量库。
+- `scripts/doubao_pdf_page_store.py`：将每个 PDF 页面渲染后建立视觉向量。
+- `scripts/doubao_image_store.py`：为独立图片建立视觉向量。
+- `scripts/apply_task_metadata.py`：不重新计算向量，直接给 Qdrant 补充任务标签。
+- `scripts/query_kb.py`：任务路由、FTS5、Qdrant、RRF 和图谱混合检索。
+- `scripts/serve_doubao_vision.py`：当前主版本问答服务，默认端口 8009。
+- `scripts/serve.py`：原 BGE 兼容服务，默认端口 8008。
+- `web/`：桌面端和移动端 Web 界面。
+- `schema.sql`：知识库、会话、反馈、意图和 VIN 表结构。
+
+## 环境配置
+
+复制示例配置：
+
+```powershell
+Copy-Item .\.env.example .\.env
+```
+
+在本地 `.env` 中填写自己的火山方舟密钥：
+
+```env
+ARK_API_KEY=你的方舟API密钥
+ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/plan/v3
+ARK_FAST_MODEL=doubao-seed-2-0-lite-260215
+ARK_DEEP_MODEL=kimi-k3
+
+DOUBAO_EMBEDDING_API_KEY=你的向量模型密钥
+DOUBAO_EMBEDDING_URL=https://ark.cn-beijing.volces.com/api/plan/v3/embeddings/multimodal
+DOUBAO_EMBEDDING_MODEL=doubao-embedding-vision
+DOUBAO_EMBEDDING_DIMENSIONS=2048
+```
+
+`.env` 已加入 `.gitignore`，禁止把真实密钥写入源码、小程序或 GitHub。
+
+## 全量构建
+
+### 1. 解析资料与生成切片
 
 ```powershell
 python .\scripts\build_kb.py
 ```
 
-构建会同步更新 `output/qdrant`。Qdrant 使用本地持久化模式，不需要 Docker；向量模型缓存在 `output/models`，文档不会上传到第三方。首次构建需要处理全部分块，之后只向量化新增或内容发生变化的分块。由于本地 Qdrant 采用文件锁，重建知识库前请先停止 `scripts/serve.py`，完成后再启动服务。
-
-构建会先保存会话、消息和反馈，再重建文档索引并恢复这些运行数据。解析缓存以文件内容 SHA-256 为键，因此新增或替换资料后仍可直接运行同一条命令，未变化文件不会再次解析。不要手工删除 `output/extraction_cache`，除非需要强制重做全部文档解析。
-
-扫描 PDF 会在普通文本提取失败后自动进入本地 OCR。OCR 运行库位于 `tools/python_packages`，资料不会上传到第三方。当前 76 份扫描图纸均已执行 OCR，其中 60 份形成可检索分块；其余 16 份作为 `image_only` 保留原图和预览，不根据模糊内容生成答案。OCR 结果同样按文件哈希缓存。
-
-## 查询
+### 2. 建立任务分类和故障码精确索引
 
 ```powershell
-python .\scripts\query_kb.py --question "BMS故障码怎么排查？" --scene 修
-python .\scripts\query_kb.py --question "SAA38289有哪些图纸？"
-python .\scripts\query_kb.py --question "JH6的保养要求是什么？" --vehicle-series JH6 --scene 养
+python .\scripts\build_task_index.py
 ```
 
-## 启动本地服务
+### 3. 建立豆包文字向量
+
+```powershell
+python .\scripts\doubao_vision_store.py --workers 1 --batch-size 8 --timeout 90
+```
+
+### 4. 建立 PDF 页面和图片向量
+
+```powershell
+python .\scripts\doubao_pdf_page_store.py --workers 1 --batch-size 2
+python .\scripts\doubao_image_store.py --workers 1 --batch-size 4
+```
+
+使用单并发是为了降低火山方舟 HTTP 429 限流风险。所有脚本均按唯一 ID 增量写入，任务中断后重复运行即可补齐缺失项，不会重复生成已有向量。
+
+### 5. 将任务标签同步到向量集合
+
+```powershell
+python .\scripts\apply_task_metadata.py `
+  --path output\qdrant_doubao_vision `
+  --collection truck_knowledge_chunks_doubao_vision
+
+python .\scripts\apply_task_metadata.py `
+  --path output\qdrant_doubao_pdf_pages `
+  --collection truck_knowledge_pdf_pages_doubao_vision
+```
+
+该步骤只更新 Qdrant payload，不重新调用向量 API。
+
+## 启动当前向量化版本
+
+推荐使用：
+
+```powershell
+.\scripts\start_vectorized.ps1
+```
+
+也可以直接运行：
+
+```powershell
+python .\scripts\serve_doubao_vision.py
+```
+
+- 桌面端：<http://127.0.0.1:8009/>
+- 移动端：<http://127.0.0.1:8009/mini/>
+- 健康检查：<http://127.0.0.1:8009/api/health>
+
+服务会先启动页面，再在后台预热本地 2,048 维 Qdrant 集合。健康接口中的 `retrieval.qdrant.ready=true` 表示向量模型已经可以查询。
+
+## 原版兼容服务
+
+如需对比原 BGE 版本：
 
 ```powershell
 python .\scripts\serve.py
 ```
 
-浏览器打开 `http://127.0.0.1:8008`。服务仅监听本机地址，原始知识文档不会对外发布。
+访问 <http://127.0.0.1:8008/>。该版本使用 `BAAI/bge-small-zh-v1.5` 和 `truck_knowledge_chunks`，不会影响豆包向量集合。
 
-移动端小程序风格入口：`http://127.0.0.1:8008/mini/`。该页面是本地手机界面演示，不需要微信 AppID，和电脑端共用同一知识库、Kimi 智能体、会话及反馈接口。
+## 问答能力
 
-## 接入火山方舟 Kimi 智能体
+- 豆包快速模式与 Kimi K3 深度模式。
+- NDJSON 流式回答与阶段状态。
+- 连续追问、待确认问题和会话上下文。
+- 故障码精确反查及全部 FMI 变体聚合。
+- SQLite 关键词、Qdrant 语义、任务标签与图谱混合召回。
+- 参考资料、文件位置、PDF 页码和原文链接。
+- VIN 精确数据表及车辆字段接口。
+- 点赞、点踩、纠偏和反馈导出。
+- 桌面端与移动端共用同一知识库和接口。
 
-复制 `.env.example` 为 `.env`，填入从火山方舟控制台创建的 API Key：
+## 数据安全
 
-当前配置使用 Agent Plan 的 OpenAI 兼容网关：
+- 服务默认只监听 `127.0.0.1`。
+- API Key 仅从本地 `.env` 读取。
+- 原始文档、VIN 数据、SQLite 和 Qdrant 均位于被忽略的 `output/` 或外部资料目录。
+- GitHub 只保存可复现源码与示例配置。
+- 专业问题要求模型依据召回资料作答；通用问题可由大模型自主回答。
 
-```env
-ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/plan/v3
-ARK_MODEL=kimi-k3
-```
-
-```powershell
-Copy-Item .\.env.example .\.env
-notepad .\.env
-python .\scripts\serve.py
-```
-
-智能体接口：
-
-```http
-POST /api/agent/chat
-Content-Type: application/json
-
-{
-  "question": "刹车片磨损有什么表现，应该怎么处理？",
-  "vehicle_series": "JH6",
-  "scene": "修",
-  "conversation_id": "可选的连续会话ID"
-}
-```
-
-也可以继续调用 `POST /api/search`，并增加 `"use_agent": true`。服务端执行顺序为：知识库召回、图谱扩展、Kimi 基于证据组织答案。API Key 只保存在后端 `.env`，不能放进小程序代码。
-
-### 流式回答与回答模式
-
-小程序使用 `POST /api/search/stream`，响应格式为逐行 JSON（NDJSON）：
-
-- `status`：当前处理阶段。
-- `meta`：检索耗时、来源数量和 Qdrant 状态。
-- `delta`：模型新增回答文字。
-- `mode_fallback`：快速模型不可用时自动切换深度模式。
-- `done`：完整答案、诊断、文档、图片、会话和耗时。
-
-请求中的 `answer_mode` 支持：
-
-- `fast`：豆包 Lite，证据和对话上下文更精简，适合日常查询。
-- `deep`：Kimi K3，适合复杂故障与完整诊断。
-
-```json
-{
-  "question": "刹车片磨损怎么检查？",
-  "scene": "修",
-  "answer_mode": "fast",
-  "use_agent": true
-}
-```
-
-搜索响应还会返回：
-
-- `related_documents`：命中的相关文档、资料位置和受控原文链接。
-- `related_images`：命中的 PDF 页面、PPTX 幻灯片或文档图片预览。
-- `answer_images`：直接嵌入当前智能体回答下方的最多 4 张相关图片或页面。
-- 每条 `sources` 记录中的 `document_url` 和 `preview_url`。
-- `diagnosis`：故障码、安全等级、证据充足度、检查清单和需要继续确认的问题。
-- `image_recognition`：用户上传图片参与本次检索时的本地 OCR 结果。
-
-诊断追问会保存到 `conversations.pending_question`。用户在同一 `conversation_id` 下回答“是、否、没有、亮了、不确定”等短句时，服务端会自动把它解释为对上一条诊断追问的回答，而不是创建一个无上下文的新问题。响应中的 `conversation_context.continued` 可用于确认是否成功承接上一轮。
-
-智能体回答气泡会直接显示相关图片和来源页码。点击PDF图片或“定位原文”会通过 `#page=N` 直接跳到命中页；PPTX点击后显示命中幻灯片预览。网页右侧“相关资料”页签仍可查看完整资料列表。预览文件缓存在 `output/previews`；原始资料不会被复制或修改，文件访问被限制在配置的语料根目录内。
-
-## 性能与运行状态
-
-`config.json` 的 `retrieval` 节控制本地混合检索：
-
-- `candidate_limit`：全文初筛候选数，当前为 240。
-- `semantic_limit`：Qdrant 中文语义召回候选数，当前为 80。
-- `embedding_model`：本地向量模型，当前为 `BAAI/bge-small-zh-v1.5`。
-- `rrf_k`：关键词与语义结果的 RRF 融合参数。
-- `cache_max_entries`：相同问题检索结果的最大缓存条数。
-- `cache_ttl_seconds`：检索缓存有效时间，当前为 10 分钟。
-- `performance_sample_size`：内存中保留的性能样本数。
-- `preview_warm_workers`：命中页面图片的后台预热并发数。
-
-可通过以下接口观察状态：
-
-- `GET /api/health`：数据库、豆包配置和检索后端状态。
-- `GET /api/performance`：检索、智能体和总响应时间的平均值、P50、P95、最大值及缓存命中率。
-- `GET /api/triples?q=刹车片`：使用图谱 FTS5 索引查询相关三元组。
-- `GET /api/quality`：构建状态、OCR 覆盖率和纯图片资料统计。
-- `GET /api/fault-code?q=P312700`：文档索引与知识图谱双通道故障码查询。
-- `POST /api/image/recognize`：识别不超过 8MB 的车辆、仪表或故障码图片。
-
-图片识别接口接收 JSON：
-
-```json
-{
-  "file_name": "仪表照片.jpg",
-  "image_base64": "图片的Base64内容"
-}
-```
-
-识别后将返回的 `text` 作为 `/api/search` 的 `image_ocr_text` 传入，即可让图片文字与用户问题共同检索企业资料。原图不写入知识库。
-
-每次响应包含 `timing` 和 `retrieval.timing_ms`。2026-08-04 本机回归测试中，Qdrant 与 FTS5 冷查询约 220ms，缓存命中约 0.6ms；快速模式约 0.9 秒开始显示文字、约 3 秒完成，深度模式受 Kimi K3 推理速度影响，首字和完整回答会明显更慢。
-
-数据量继续增长时的演进路线见 [SCALING.md](SCALING.md)。
-
-## 已实现的文字版要求
-
-- 车系与用/养/修/保分库。
-- 文档解析、启用状态、版本替换和来源定位。
-- 全文召回、字符向量召回、重排和图谱邻接扩展。
-- 三元组 FTS5 索引、检索结果缓存、分阶段耗时统计和页面预览后台预热。
-- 扫描图纸本地 OCR、拍照识别、故障码双通道查询和引导式诊断。
-- 维修同义词扩展、场景软优先和多文档来源分散，避免相关资料被场景硬过滤或单本文档垄断。
-- 专有知识答案与引用源分离展示。
-- 命中文档原文打开、PDF页和PPT幻灯片图片预览。
-- 不少于 5 轮会话记忆的数据结构。
-- 赞/踩纠偏记录及管理员导出所需字段。
-- 标准实体表、关系表和三元组 CSV。
-
-图片识别、语音输入、VIN 静态字段平台接入和通用大模型生成属于外部模型或业务系统集成项，本地版本提供对应接口字段，不伪造这些能力。
+更多多模态构建细节见 [DOUBAO_VISION.md](DOUBAO_VISION.md)，数据继续增长后的部署建议见 [SCALING.md](SCALING.md)。
