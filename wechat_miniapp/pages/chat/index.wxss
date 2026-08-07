@@ -617,6 +617,7 @@
   right: 0;
   bottom: 0;
   left: 0;
+  box-sizing: border-box;
   padding: 12rpx 20rpx calc(12rpx + env(safe-area-inset-bottom));
   border-top: 1rpx solid #eef1f4;
   background: #ffffffef;
@@ -624,14 +625,21 @@
   backdrop-filter: blur(20rpx);
 }
 .input-box {
-  display: grid;
-  grid-template-columns: 1fr 108rpx;
-  gap: 12rpx;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  gap: 14rpx;
   align-items: end;
 }
 .input-box textarea {
-  min-height: 48rpx;
+  width: 0;
+  min-width: 0;
+  min-height: 76rpx;
   max-height: 150rpx;
+  flex: 1 1 auto;
+  box-sizing: border-box;
+  margin: 0;
   padding: 17rpx 20rpx;
   border: 1rpx solid #e1e6ec;
   border-radius: 20rpx;
@@ -640,7 +648,11 @@
   line-height: 1.45;
 }
 .send-button {
+  width: 108rpx;
   height: 76rpx;
+  flex: 0 0 108rpx;
+  box-sizing: border-box;
+  margin: 0;
   padding: 0;
   color: #fff;
   background: #199aff;
@@ -739,8 +751,7 @@
 .vin-field text { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #263a51; font-size: 21rpx; }
 .vin-field text:first-child { margin-bottom: 6rpx; color: #8793a2; font-size: 17rpx; }
 .vin-empty { display: block; padding: 18rpx; border-radius: 16rpx; color: #875a16; background: #fff6df; font-size: 21rpx; line-height: 1.75; }
-.input-box { grid-template-columns: minmax(0,1fr) 70rpx 108rpx; }
-.voice-input-button { height: 76rpx; margin: 0; padding: 0; border: 1rpx solid #d7e4ef; border-radius: 20rpx; color: #1769a8; background: #f1f7fb; font-size: 19rpx; }
+.voice-input-button { width: 72rpx; height: 76rpx; flex: 0 0 72rpx; box-sizing: border-box; margin: 0; padding: 0; border: 1rpx solid #d7e4ef; border-radius: 20rpx; color: #1769a8; background: #f1f7fb; font-size: 19rpx; }
 .composer-tools text {
   max-width: 240rpx;
   overflow: hidden;
