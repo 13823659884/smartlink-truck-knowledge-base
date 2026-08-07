@@ -1,0 +1,40 @@
+<view class="settings-page">
+  <view class="company-card">
+    <image class="company-logo" src="/assets/smartlink-logo.png" mode="widthFix"></image>
+    <view class="company-slogan">让交通运输物流成为愉快的行业</view>
+    <view class="company-name">鱼快创领智能科技（南京）有限公司</view>
+    <view class="company-tags">
+      <text>商用车智能网联</text>
+      <text>智慧物流</text>
+      <text>企业知识库</text>
+    </view>
+    <button class="website-button" bindtap="copyWebsite">官网 smartlink.com.cn · 点击复制</button>
+  </view>
+
+  <view class="settings-card">
+    <view class="card-title">知识库服务地址</view>
+    <input value="{{apiBaseUrl}}" placeholder="http://127.0.0.1:8009" bindinput="onInput" />
+    <view class="button-row">
+      <button class="primary" bindtap="saveAndTest" loading="{{testing}}">保存并测试</button>
+      <button bindtap="resetDefault">恢复默认</button>
+    </view>
+    <view wx:if="{{resultText}}" class="result {{connected ? 'success' : 'error'}}">{{resultText}}</view>
+  </view>
+
+  <view class="settings-card">
+    <view class="card-title">知识库质量</view>
+    <view class="quality-text">{{qualityText}}</view>
+    <view class="note-item"><text>分类向量检索</text><text>{{retrievalText}}</text></view>
+    <view class="note-item"><text>图片识别</text><text>本地 RapidOCR，不上传企业资料</text></view>
+  </view>
+
+  <view class="settings-card note-card">
+    <view class="card-title">如何填写</view>
+    <view class="note-item"><text>开发者工具</text><text>使用 http://127.0.0.1:8009</text></view>
+    <view class="note-item"><text>真机调试</text><text>使用电脑WLAN地址，例如 http://192.168.63.102:8009</text></view>
+    <view class="note-item"><text>正式发布</text><text>需要部署HTTPS服务并配置微信服务器域名</text></view>
+  </view>
+
+  <view class="security-note">智能体API密钥只保存在电脑后端，不会写入小程序代码。</view>
+  <view class="brand-footer">SMARTLINK · 鱼快创领知识助手</view>
+</view>

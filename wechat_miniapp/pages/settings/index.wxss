@@ -1,0 +1,155 @@
+.settings-page {
+  padding: 28rpx;
+}
+.company-card {
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 22rpx;
+  padding: 34rpx 30rpx 28rpx;
+  border-radius: 28rpx;
+  color: #fff;
+  background: linear-gradient(135deg, #075fd7, #199aff 70%, #56bcff);
+  box-shadow: 0 16rpx 36rpx #199aff30;
+}
+.company-card::after {
+  content: "";
+  position: absolute;
+  top: -100rpx;
+  right: -70rpx;
+  width: 260rpx;
+  height: 260rpx;
+  border: 38rpx solid #ffffff12;
+  border-radius: 50%;
+}
+.company-logo {
+  position: relative;
+  z-index: 1;
+  width: 270rpx;
+}
+.company-slogan {
+  position: relative;
+  z-index: 1;
+  margin-top: 28rpx;
+  font-size: 29rpx;
+  font-weight: 700;
+}
+.company-name {
+  position: relative;
+  z-index: 1;
+  margin-top: 10rpx;
+  font-size: 19rpx;
+  opacity: 0.78;
+}
+.company-tags {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: 10rpx;
+  margin-top: 24rpx;
+}
+.company-tags text {
+  padding: 8rpx 12rpx;
+  border: 1rpx solid #ffffff3d;
+  border-radius: 18rpx;
+  background: #ffffff12;
+  font-size: 17rpx;
+}
+.website-button {
+  position: relative;
+  z-index: 1;
+  width: auto;
+  margin: 26rpx 0 0;
+  padding: 12rpx 18rpx;
+  border: 1rpx solid #ffffff47;
+  border-radius: 18rpx;
+  color: #fff;
+  background: #ffffff17;
+  font-size: 19rpx;
+  line-height: 1.4;
+}
+.settings-card {
+  margin-bottom: 22rpx;
+  padding: 28rpx;
+  border-radius: 24rpx;
+  background: #fff;
+  box-shadow: 0 5rpx 24rpx #1111110b;
+}
+.card-title {
+  margin-bottom: 18rpx;
+  font-size: 28rpx;
+  font-weight: 700;
+}
+.settings-card input {
+  padding: 22rpx;
+  border: 1rpx solid #dfe2e5;
+  border-radius: 16rpx;
+  background: #f7f8f9;
+  font-size: 23rpx;
+}
+.button-row {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 20rpx;
+}
+.button-row button {
+  flex: 1;
+  margin: 0;
+  border-radius: 16rpx;
+  font-size: 22rpx;
+}
+.button-row .primary {
+  color: #fff;
+  background: #199aff;
+}
+.result {
+  margin-top: 18rpx;
+  padding: 16rpx;
+  border-radius: 14rpx;
+  font-size: 21rpx;
+}
+.result.success {
+  color: #0877d1;
+  background: #edf7ff;
+}
+.result.error {
+  color: #a33232;
+  background: #fff0f0;
+}
+.note-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18rpx;
+}
+.note-item {
+  display: flex;
+  flex-direction: column;
+  gap: 7rpx;
+  padding-bottom: 18rpx;
+  border-bottom: 1rpx solid #eceef0;
+}
+.note-item:last-child {
+  padding-bottom: 0;
+  border: 0;
+}
+.note-item text:first-child {
+  font-size: 23rpx;
+  font-weight: 700;
+}
+.note-item text:last-child {
+  color: #747a80;
+  font-size: 21rpx;
+  line-height: 1.6;
+}
+.security-note {
+  padding: 0 14rpx;
+  color: #969a9f;
+  font-size: 20rpx;
+  line-height: 1.6;
+}
+.brand-footer {
+  padding: 28rpx 0 12rpx;
+  color: #a1a7ad;
+  text-align: center;
+  font-size: 17rpx;
+  letter-spacing: 2rpx;
+}

@@ -109,6 +109,7 @@ SPN、FMI和P码不只依赖语义向量。`build_task_index.py` 会从资料中
 | `scripts/source_preview.py` | 文档、PDF 页和幻灯片预览 |
 | `schema.sql` | 文档、图谱、会话、反馈、意图和 VIN 数据结构 |
 | `web/` | 桌面端和移动端页面 |
+| `wechat_miniapp/` | 可导入微信开发者工具的原生小程序工程 |
 
 ## 环境配置
 
@@ -188,6 +189,9 @@ python .\scripts\serve_doubao_vision.py
 - 桌面端：<http://127.0.0.1:8009/>
 - 移动端：<http://127.0.0.1:8009/mini/>
 - 健康检查：<http://127.0.0.1:8009/api/health>
+
+微信小程序工程位于 `wechat_miniapp/`，开发者工具预览时默认连接
+`http://127.0.0.1:8009`。真机调试需在设置页填写运行后端电脑的局域网地址；正式发布时需改用 HTTPS，并在微信公众平台配置合法域名。小程序只保存后端地址，不保存任何模型密钥。
 
 本地 BGE 兼容版本可通过以下命令运行：
 

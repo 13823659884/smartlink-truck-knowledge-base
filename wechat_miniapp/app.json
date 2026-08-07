@@ -1,0 +1,32 @@
+{
+  "pages": [
+    "pages/chat/index",
+    "pages/settings/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "鱼快创领智修助手",
+    "navigationBarBackgroundColor": "#ffffff",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f5f6f7",
+    "backgroundTextStyle": "light"
+  },
+  "tabBar": {
+    "color": "#969a9f",
+    "selectedColor": "#199aff",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/chat/index",
+        "text": "智能问答"
+      },
+      {
+        "pagePath": "pages/settings/index",
+        "text": "设置"
+      }
+    ]
+  },
+  "sitemapLocation": "sitemap.json",
+  "style": "v2",
+  "lazyCodeLoading": "requiredComponents"
+}

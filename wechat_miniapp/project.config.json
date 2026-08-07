@@ -1,0 +1,17 @@
+{
+  "description": "中重卡用养修保知识问答小程序",
+  "compileType": "miniprogram",
+  "libVersion": "latest",
+  "appid": "wxa391b2c915242d18",
+  "projectname": "truck-knowledge-assistant",
+  "miniprogramRoot": "./",
+  "setting": {
+    "urlCheck": false,
+    "es6": true,
+    "postcss": true,
+    "minified": true,
+    "enhance": true,
+    "minifyWXML": true
+  },
+  "condition": {}
+}

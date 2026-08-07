@@ -1,0 +1,266 @@
+<view class="page-shell">
+  <view class="custom-nav" style="padding-top: {{statusBarHeight}}px;">
+    <view class="nav-content" style="height: {{navBarHeight}}px; padding-right: {{navRight}}px;">
+      <view class="nav-brand">
+        <view class="brand-dot">鱼</view>
+        <view class="nav-copy">
+          <text>鱼快创领</text>
+          <text>商用车知识助手</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <scroll-view
+    class="chat-scroll"
+    scroll-y
+    enhanced
+    scroll-with-animation
+    show-scrollbar="{{false}}"
+    scroll-into-view="{{scrollIntoView}}"
+  >
+    <view class="content" style="padding-top: {{navHeight + 14}}px; padding-bottom: {{composerHeight + 16}}px;">
+      <view class="intro-section">
+        <text class="intro-title">今天想查询什么车辆问题？</text>
+        <text class="intro-desc">故障诊断、维修资料和零部件知识，都可以直接问</text>
+        <view class="connection-line {{connected ? 'online' : ''}}">
+          <text class="connection-dot"></text>
+          <text>{{statusText}}</text>
+        </view>
+        <view class="retrieval-line {{retrievalReady ? 'online' : ''}}">
+          <text class="retrieval-icon">向</text>
+          <view>
+            <text>企业知识检索</text>
+            <text>{{retrievalText}}</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="vehicle-banner">
+        <view class="vehicle-image-wrap">
+          <image
+            src="/assets/smart-truck-hero.jpg"
+            mode="aspectFill"
+            aria-label="智能网联蓝白色重卡车辆主视觉"
+          ></image>
+        </view>
+        <view class="vehicle-banner-copy">
+          <text class="vehicle-banner-tag">车辆智诊</text>
+          <text class="vehicle-banner-title">让每一次排查都有据可查</text>
+          <text class="vehicle-banner-desc">回答关联原始文档、页码和资料摘要</text>
+        </view>
+      </view>
+
+      <view class="filter-card">
+        <picker mode="selector" range="{{vehicleOptions}}" value="{{vehicleIndex}}" bindchange="onVehicleChange">
+          <view class="filter-item"><text>车型</text><text class="filter-value">{{vehicleOptions[vehicleIndex]}} ›</text></view>
+        </picker>
+        <view class="filter-divider"></view>
+        <picker mode="selector" range="{{sceneOptions}}" value="{{sceneIndex}}" bindchange="onSceneChange">
+          <view class="filter-item"><text>场景</text><text class="filter-value">{{sceneOptions[sceneIndex]}} ›</text></view>
+        </picker>
+      </view>
+
+      <view class="quick-wrap" wx:if="{{showQuick}}">
+        <view class="section-heading">
+          <text class="section-title">查询能力</text>
+          <text class="section-note">当前：{{activeCapability}}</text>
+        </view>
+        <scroll-view class="capability-scroll" scroll-x show-scrollbar="{{false}}">
+          <view class="capability-list">
+            <button
+              wx:for="{{capabilityOptions}}"
+              wx:key="id"
+              class="capability-card {{activeIntent === item.id ? 'active' : ''}}"
+              data-id="{{item.id}}"
+              bindtap="selectCapability"
+            ><text>{{item.icon}}</text><text>{{item.name}}</text></button>
+          </view>
+        </scroll-view>
+        <view class="section-heading recent-heading" wx:if="{{recentHistory.length}}">
+          <text class="section-title">最近记录</text><text class="section-note">可继续追问</text>
+        </view>
+        <scroll-view class="recent-scroll" scroll-x show-scrollbar="{{false}}" wx:if="{{recentHistory.length}}">
+          <view class="recent-list">
+            <button wx:for="{{recentHistory}}" wx:key="id" class="recent-card" data-id="{{item.id}}" bindtap="openHistory">
+              <text>{{item.question || '未命名查询'}}</text><text>{{item.vehicle_series || item.scene || '智能问答'}}</text>
+            </button>
+          </view>
+        </scroll-view>
+        <view class="quick-grid quick-example-grid">
+          <button
+            class="quick-card"
+            wx:for="{{quickQuestions}}"
+            wx:key="question"
+            data-question="{{item.question}}"
+            bindtap="askQuick"
+          >
+            <text class="quick-icon">{{item.icon}}</text>
+            <text class="quick-title">{{item.title}}</text>
+          </button>
+        </view>
+      </view>
+
+      <view class="messages" wx:if="{{!showQuick || messages.length > 1}}">
+        <view
+          wx:for="{{messages}}"
+          wx:key="id"
+          id="message-{{item.id}}"
+          class="message-row {{item.role}}"
+        >
+          <view wx:if="{{item.role === 'assistant'}}" class="avatar">鱼</view>
+          <view class="message-bubble {{item.loading ? 'loading' : ''}} {{item.streaming ? 'streaming' : ''}}">
+            <view wx:if="{{item.agentError}}" class="agent-error">{{item.agentError}}</view>
+            <view wx:if="{{item.retrievalInfo.visible}}" class="retrieval-trace">
+              <text>{{item.retrievalInfo.taskLabel}}</text>
+              <text>{{item.retrievalInfo.routeLabel}}</text>
+              <text wx:if="{{item.retrievalInfo.exactCount}}">精确命中 {{item.retrievalInfo.exactCount}} 条</text>
+              <text wx:elif="{{item.retrievalInfo.sourceCount}}">采用 {{item.retrievalInfo.sourceCount}} 条资料</text>
+              <text wx:if="{{item.retrievalInfo.retrievalMs}}">{{item.retrievalInfo.retrievalMs}}ms</text>
+            </view>
+            <view wx:if="{{item.answerParagraphs && item.answerParagraphs.length}}" class="answer-report">
+              <view class="answer-report-head"><text>AI</text><text>智能诊断结果</text><text>{{item.references.length}}条资料</text></view>
+              <view class="answer-block">
+                <view class="answer-block-title"><text>01</text><text>分析与结论</text></view>
+                <view wx:for="{{item.answerParagraphs}}" wx:for-item="paragraph" wx:key="index" class="answer-paragraph">
+                  <text>{{paragraph.text}}</text>
+                  <button wx:for="{{paragraph.citations}}" wx:for-item="citation" wx:key="*this" class="citation-chip" data-message-id="{{item.id}}" data-index="{{citation}}" catchtap="jumpReference">【资料{{citation}}】</button>
+                </view>
+              </view>
+              <view wx:if="{{item.solutionSteps.length}}" class="answer-block">
+                <view class="answer-block-title"><text>02</text><text>处理步骤</text></view>
+                <view wx:for="{{item.solutionSteps}}" wx:for-item="step" wx:key="index" class="answer-step">
+                  <text class="step-number">{{index + 1}}</text><view><text>{{step.text}}</text><button wx:for="{{step.citations}}" wx:for-item="citation" wx:key="*this" class="citation-chip" data-message-id="{{item.id}}" data-index="{{citation}}" catchtap="jumpReference">【资料{{citation}}】</button></view>
+                </view>
+              </view>
+              <view wx:if="{{item.safetyContent.text}}" class="answer-block safety-block">
+                <view class="answer-block-title"><text>03</text><text>安全提示</text></view>
+                <view class="answer-paragraph"><text>{{item.safetyContent.text}}</text><button wx:for="{{item.safetyContent.citations}}" wx:for-item="citation" wx:key="*this" class="citation-chip" data-message-id="{{item.id}}" data-index="{{citation}}" catchtap="jumpReference">【资料{{citation}}】</button></view>
+              </view>
+            </view>
+            <view wx:elif="{{item.vinResult}}" class="vin-card">
+              <view class="answer-report-head"><text>VIN</text><text>车辆静态信息</text><text>{{item.vin}}</text></view>
+              <text wx:if="{{!item.vinFields.length}}" class="vin-empty">{{item.text}}</text>
+              <view wx:else class="vin-grid"><view wx:for="{{item.vinFields}}" wx:key="label" class="vin-field"><text>{{item.label}}</text><text>{{item.value}}</text></view></view>
+            </view>
+            <text wx:else class="message-text">{{item.text}}</text>
+
+            <view wx:if="{{item.loading}}" class="loading-dots"><text></text><text></text><text></text></view>
+
+            <view wx:if="{{item.diagnosis.enabled}}" class="diagnosis-card {{item.diagnosis.safety_level === '高' ? 'high-risk' : ''}}">
+              <view class="diagnosis-title">{{item.diagnosis.title}}</view>
+              <view class="diagnosis-meta">
+                <text>证据：{{item.diagnosis.evidence_status}}</text>
+                <text>安全等级：{{item.diagnosis.safety_level}}</text>
+              </view>
+              <view wx:if="{{item.diagnosis.context_applied}}" class="context-badge">已结合上一轮诊断回答继续分析</view>
+              <view wx:for="{{item.diagnosis.checklist}}" wx:key="*this" class="diagnosis-step">{{index + 1}}. {{item}}</view>
+              <view wx:if="{{item.diagnosis.pending_question}}" class="diagnosis-prompt">
+                <text>下一步请确认</text>
+                <text>{{item.diagnosis.pending_question}}</text>
+              </view>
+              <view wx:if="{{item.diagnosis.reply_options.length}}" class="diagnosis-options">
+                <button
+                  wx:for="{{item.diagnosis.reply_options}}"
+                  wx:for-item="option"
+                  wx:key="*this"
+                  data-answer="{{option}}"
+                  data-prompt="{{item.diagnosis.pending_question}}"
+                  bindtap="answerDiagnosis"
+                >{{option}}</button>
+              </view>
+            </view>
+
+            <view wx:if="{{item.relatedQuestions.length}}" class="related-section">
+              <view class="attachment-title">继续追问</view>
+              <button
+                wx:for="{{item.relatedQuestions}}"
+                wx:for-item="question"
+                wx:key="*this"
+                class="related-chip"
+                data-question="{{question}}"
+                bindtap="askRelated"
+              >{{question}}</button>
+            </view>
+
+            <view wx:if="{{item.references.length}}" class="reference-section">
+              <view class="attachment-title">引用来源（{{item.references.length}}）</view>
+              <view
+                wx:for="{{item.references}}"
+                wx:for-item="reference"
+                wx:key="key"
+                class="reference-card"
+                id="source-{{item.id}}-{{reference.index}}"
+                data-url="{{reference.fileUrl}}"
+                data-name="{{reference.fileName}}"
+                bindtap="openDocument"
+              >
+                <view class="reference-head">
+                  <view class="document-icon">文</view>
+                  <view class="document-copy">
+                    <text>{{reference.fileName}}</text>
+                    <text>{{reference.sourceLocator}}</text>
+                  </view>
+                  <text class="document-arrow">›</text>
+                </view>
+                <text class="reference-excerpt">{{reference.excerpt}}</text>
+              </view>
+            </view>
+
+            <view wx:if="{{item.canFeedback}}" class="feedback-row">
+              <button data-message-id="{{item.messageId}}" data-rating="up" bindtap="sendFeedback">👍 有帮助</button>
+              <button data-message-id="{{item.messageId}}" data-rating="down" bindtap="sendFeedback">👎 需纠偏</button>
+            </view>
+          </view>
+        </view>
+        <view id="message-bottom" class="message-bottom"></view>
+      </view>
+    </view>
+  </scroll-view>
+
+  <view class="composer">
+    <view wx:if="{{pendingImage}}" class="pending-image">
+      <image src="{{pendingImage.tempFilePath}}" mode="aspectFill"></image>
+      <view><text>图片文字已识别</text><text>{{pendingImage.confidence}}% · {{pendingImage.fileName}}</text></view>
+      <button bindtap="removePendingImage">×</button>
+    </view>
+    <view class="mode-switch">
+      <button
+        class="mode-option {{answerMode === 'fast' ? 'active' : ''}}"
+        data-mode="fast"
+        bindtap="onModeChange"
+      >
+        <text class="mode-icon">⚡</text>
+        <text>快速问答</text>
+      </button>
+      <button
+        class="mode-option {{answerMode === 'deep' ? 'active' : ''}}"
+        data-mode="deep"
+        bindtap="onModeChange"
+      >
+        <text class="mode-icon">◎</text>
+        <text>深度诊断</text>
+      </button>
+    </view>
+    <view class="input-box">
+      <textarea
+        value="{{inputValue}}"
+        placeholder="请输入车辆问题"
+        auto-height
+        maxlength="500"
+        confirm-type="send"
+        bindinput="onInput"
+        bindconfirm="sendQuestion"
+      ></textarea>
+      <button class="voice-input-button" bindtap="useVoiceInput">语音</button>
+      <button class="send-button" disabled="{{sending || !inputValue}}" bindtap="sendQuestion">发送</button>
+    </view>
+    <view class="composer-tools">
+      <view>
+        <button bindtap="chooseImage" loading="{{recognizing}}">▣ 拍照识别</button>
+        <button bindtap="newConversation">＋ 新对话</button>
+      </view>
+      <text>AI内容仅供辅助诊修</text>
+    </view>
+  </view>
+</view>

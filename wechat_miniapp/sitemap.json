@@ -1,0 +1,9 @@
+{
+  "desc": "企业内部车辆知识问答小程序",
+  "rules": [
+    {
+      "action": "disallow",
+      "page": "*"
+    }
+  ]
+}
