@@ -1,6 +1,6 @@
 # 豆包多模态镜像向量库
 
-> 当前该版本已升级为项目主版本。2026-08-07的完整处理结果为：文字95,252条、PDF页面21,840条、独立图片312条、任务标签95,252条，失败项0。
+本模块使用`doubao-embedding-vision`为文字、PDF页面和独立图片建立相互独立的2,048维向量集合。
 
 该版本在原有 BGE/Qdrant 知识库之外，单独创建 `truck_knowledge_chunks_doubao_vision` 集合，使用 `doubao-embedding-vision` 生成 2048 维向量。原集合、SQLite 切片和原版问答服务不会被覆盖。
 
@@ -41,7 +41,7 @@ python scripts/doubao_image_store.py --workers 4 --batch-size 8
 
 图片集合为 `truck_knowledge_images_doubao_vision`，与文字镜像集合和原版集合完全分离。脚本会扫描知识库目录下的 PNG/JPG/JPEG/WEBP/BMP/GIF 文件并支持断点续跑。
 
-PDF 页面也可全部渲染为图像并向量化（当前资料共 210 个 PDF、21,840 页）：
+PDF 页面也可逐页渲染为图像并建立视觉向量：
 
 ```powershell
 python scripts/doubao_pdf_page_store.py --workers 4 --batch-size 4
