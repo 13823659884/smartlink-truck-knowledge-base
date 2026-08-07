@@ -14,6 +14,7 @@ from typing import Any
 
 from build_kb import normalize_text, normalize_vector, search_tokens, vector_counts
 from qdrant_store import semantic_search
+from task_router import chunk_task_types, detect_task_type, exact_fault_sources
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -49,9 +50,11 @@ def warm_chunk_cache(database_path: Path = DEFAULT_DATABASE) -> int:
     return len(_CHUNK_CACHE)
 
 
-def _timed_semantic_search(question: str, limit: int) -> tuple[list[dict[str, Any]], float]:
+def _timed_semantic_search(
+    question: str, limit: int, task_type: str = ""
+) -> tuple[list[dict[str, Any]], float]:
     started = time.perf_counter()
-    rows = semantic_search(question, limit=limit)
+    rows = semantic_search(question, limit=limit, task_type=task_type)
     return rows, round((time.perf_counter() - started) * 1000, 2)
 
 RELATION_NAMES = {
@@ -176,6 +179,60 @@ def graph_fts_expression(question: str) -> str:
     if not escaped:
         return ""
     return "search_terms:(" + " OR ".join(f'"{token}"' for token in escaped) + ")"
+
+
+def fault_code_terms(question: str) -> list[str]:
+    """Extract P/SPN/FMI codes, including compact forms such as ``SPN647``."""
+    values: list[str] = []
+    text = question.lower()
+    for match in re.finditer(r"\bp\d{4,7}\b", text):
+        values.append(match.group(0))
+    for match in re.finditer(r"\bspn\s*[:#-]?\s*(\d{3,8})", text):
+        values.extend(["spn" + match.group(1), match.group(1)])
+    for match in re.finditer(r"\bfmi\s*[:#-]?\s*(\d{1,3})", text):
+        values.extend(["fmi" + match.group(1), match.group(1)])
+    # Keep standalone 3+ digit values for formats like “SPN 647”.
+    if "spn" in text or "fmi" in text:
+        values.extend(re.findall(r"\b\d{3,8}\b", text))
+    values = [value for index, value in enumerate(values) if value and value not in values[:index]]
+    return values
+
+
+def focused_fault_excerpt(content: str, code_terms: list[str], limit: int = 1400) -> str:
+    """Put the matching code and its nearby diagnosis text at the front."""
+    if not code_terms:
+        return content
+    lowered = content.lower()
+    compact = re.sub(r"[\s:#-]+", "", lowered)
+    positions: list[int] = []
+    for term in code_terms:
+        if term in {"spn", "fmi"}:
+            continue
+        position = fault_term_position(content, term)
+        if position >= 0:
+            positions.append(position)
+    if not positions:
+        return content
+    start = max(0, min(positions) - 220)
+    end = min(len(content), start + limit)
+    prefix = "…" if start else ""
+    suffix = "…" if end < len(content) else ""
+    return prefix + content[start:end].strip() + suffix
+
+
+def fault_term_position(content: str, term: str) -> int:
+    lowered = content.lower()
+    if term.startswith(("spn", "fmi")):
+        compact = re.sub(r"[\s:#-]+", "", lowered)
+        position = compact.find(term)
+        if position >= 0:
+            return position
+        term = re.sub(r"^(?:spn|fmi)", "", term)
+    if term.isdigit():
+        match = re.search(rf"(?<![\d.]){re.escape(term)}(?![\d.])", lowered)
+        return match.start() if match else -1
+    match = re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", lowered)
+    return match.start() if match else -1
 
 
 def fetch_triples(
@@ -320,6 +377,43 @@ def search_knowledge_base(
     connection = sqlite3.connect(database_path)
     connection.row_factory = sqlite3.Row
     try:
+        task_type = detect_task_type(question)
+        exact_fault_matches = exact_fault_sources(question)
+        if exact_fault_matches:
+            total_ms = round((time.perf_counter() - retrieval_started) * 1000, 2)
+            return {
+                "question": question,
+                "filters": {
+                    "vehicle_series": vehicle_series,
+                    "scene": scene,
+                    "energy_type": energy_type,
+                    "task_type": task_type,
+                },
+                "answer": build_answer(question, exact_fault_matches, []),
+                "sources": exact_fault_matches[: max(1, top_k)],
+                "triples": [],
+                "retrieval": {
+                    "candidate_count": len(exact_fault_matches),
+                    "task_type": task_type,
+                    "exact_fault_match_count": len(exact_fault_matches),
+                    "lexical_candidate_count": 0,
+                    "semantic_candidate_count": 0,
+                    "semantic_error": "",
+                    "source_count": min(len(exact_fault_matches), max(1, top_k)),
+                    "triple_count": 0,
+                    "expanded_terms": [],
+                    "graph_method": "skipped_for_exact_fault_code",
+                    "candidate_limit": 0,
+                    "timing_ms": {
+                        "candidate_fetch": total_ms,
+                        "semantic": 0.0,
+                        "rerank": 0.0,
+                        "graph": 0.0,
+                        "total": total_ms,
+                    },
+                    "method": "任务路由 + 故障码结构化精确索引（跳过全库向量检索）",
+                },
+            }
         dimensions = json.loads(
             connection.execute(
                 "SELECT value_json FROM vector_meta WHERE key = 'dimensions'"
@@ -334,6 +428,7 @@ def search_knowledge_base(
         query_text = (
             f"{context}\n{expanded_question}" if context else expanded_question
         )
+        code_terms = fault_code_terms(query_text)
         query_vector = normalize_vector(
             vector_counts(query_text, int(dimensions)), idf
         )
@@ -364,6 +459,7 @@ def search_knowledge_base(
                 _timed_semantic_search,
                 expanded_question,
                 max(10, int(semantic_limit)),
+                task_type,
             )
             if int(semantic_limit) > 0
             else None
@@ -384,6 +480,35 @@ def search_knowledge_base(
             """,
             [*parameters, max(20, min(int(candidate_limit), 2000))],
         ).fetchall()
+        # Numeric SPN/FMI values are not always indexed by FTS5. Add direct
+        # substring matches to the candidate pool, then let exact-code boosts
+        # place them ahead of generic OCR/semantic matches.
+        if code_terms:
+            like_terms = [term for term in code_terms if term not in {"spn", "fmi"}]
+            if like_terms:
+                exact_where = " OR ".join(
+                    (
+                        "replace(replace(replace(lower(c.content),' ',''),':',''),'-','') LIKE ?"
+                        if term.startswith(("spn", "fmi"))
+                        else "lower(c.content) LIKE ?"
+                    )
+                    for term in like_terms
+                )
+                exact_rows = connection.execute(
+                    f"""
+                    SELECT c.id, c.content, c.source_locator, c.vehicle_tags, c.scene,
+                           c.energy_tags, d.relative_path, d.file_name, d.effective_date,
+                           d.version, {vector_column}, 0.0 AS lexical_rank
+                    FROM chunks c
+                    JOIN documents d ON d.id = c.document_id
+                    {vector_join}
+                    WHERE d.enabled = 1 AND ({exact_where})
+                    LIMIT 2000
+                    """,
+                    [f"%{term}%" for term in like_terms],
+                ).fetchall()
+                seen_ids = {str(row["id"]) for row in rows}
+                rows = list(rows) + [row for row in exact_rows if str(row["id"]) not in seen_ids]
         candidate_fetch_ms = round(
             (time.perf_counter() - candidate_fetch_started) * 1000, 2
         )
@@ -468,6 +593,7 @@ def search_knowledge_base(
         candidate_ids = list(
             dict.fromkeys([*lexical_ranks.keys(), *semantic_ranks.keys()])
         )
+        category_by_chunk = chunk_task_types(candidate_ids)
         total = max(1, len(rows))
         for chunk_id in candidate_ids:
             row = row_by_id.get(chunk_id)
@@ -491,6 +617,13 @@ def search_knowledge_base(
                 lexical_score = 1.0 - (index - 1) / total
                 retrieval_score = 0.58 * lexical_score + 0.42 * vector_score
             metadata_boost = 0.0
+            candidate_task = category_by_chunk.get(chunk_id, "")
+            if candidate_task == task_type:
+                metadata_boost += 0.34
+            elif task_type != "general" and candidate_task:
+                metadata_boost -= 0.12
+            if task_type == "fault_code" and candidate_task == "claim_case":
+                metadata_boost -= 0.65
             if vehicle_series and vehicle_series in row["vehicle_tags"].split(","):
                 metadata_boost += 0.08
             if scene and scene == row["scene"]:
@@ -502,6 +635,28 @@ def search_knowledge_base(
                 if len(term) >= 3 and term in content_text
             )
             metadata_boost += min(0.36, specific_matches * 0.12)
+            if code_terms:
+                content_lower = content_text.lower()
+                code_hits = [
+                    term
+                    for term in code_terms
+                    if term not in {"spn", "fmi"}
+                    and fault_term_position(content_text, term) >= 0
+                ]
+                if code_hits:
+                    # A direct P-code/SPN number hit must outrank generic OCR
+                    # fragments returned by the semantic collection.
+                    metadata_boost += min(3.2, 2.0 + 0.45 * len(code_hits))
+                    structured_hits = sum(
+                        1
+                        for term in code_hits
+                        if term.isdigit()
+                        and re.search(rf"(?<!\d){re.escape(term)}\s*\*\s*\d+", content_lower)
+                    )
+                    metadata_boost += min(1.8, structured_hits * 1.8)
+                if "spn" in code_terms and "fmi" in code_terms:
+                    if "spn" in content_lower and "fmi" in content_lower:
+                        metadata_boost += 0.8
             intent_paths = {
                 "故障码": "故障码",
                 "图纸": "图纸",
@@ -518,7 +673,7 @@ def search_knowledge_base(
                 {
                     "chunk_id": chunk_id,
                     "score": round(score, 6),
-                    "excerpt": row["content"],
+                    "excerpt": focused_fault_excerpt(row["content"], code_terms),
                     "relative_path": row["relative_path"],
                     "file_name": row["file_name"],
                     "source_locator": row["source_locator"],
@@ -536,10 +691,21 @@ def search_knowledge_base(
                     "semantic_score": round(
                         semantic_scores.get(chunk_id, 0.0), 6
                     ),
+                    "task_type": candidate_task,
                 }
             )
         candidates.sort(key=lambda item: item["score"], reverse=True)
-        sources = diversify_sources(candidates, max(1, top_k))
+        if exact_fault_matches:
+            exact_ids = {str(item["chunk_id"]) for item in exact_fault_matches}
+            remaining = [
+                item for item in candidates if str(item["chunk_id"]) not in exact_ids
+            ]
+            sources = [
+                *exact_fault_matches[: max(1, top_k)],
+                *diversify_sources(remaining, max(0, top_k - len(exact_fault_matches))),
+            ][: max(1, top_k)]
+        else:
+            sources = diversify_sources(candidates, max(1, top_k))
         rerank_ms = round((time.perf_counter() - rerank_started) * 1000, 2)
         graph_started = time.perf_counter()
         triples, graph_method = fetch_triples(connection, expanded_question)
@@ -551,12 +717,15 @@ def search_knowledge_base(
                 "vehicle_series": vehicle_series,
                 "scene": scene,
                 "energy_type": energy_type,
+                "task_type": task_type,
             },
             "answer": build_answer(question, sources, triples),
             "sources": sources,
             "triples": triples,
             "retrieval": {
                 "candidate_count": len(candidates),
+                "task_type": task_type,
+                "exact_fault_match_count": len(exact_fault_matches),
                 "lexical_candidate_count": len(rows),
                 "semantic_candidate_count": len(semantic_rows),
                 "semantic_error": semantic_error,

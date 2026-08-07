@@ -257,7 +257,9 @@ def build_qdrant_index(
     return report
 
 
-def semantic_search(question: str, limit: int | None = None) -> list[dict[str, Any]]:
+def semantic_search(
+    question: str, limit: int | None = None, task_type: str = ""
+) -> list[dict[str, Any]]:
     config = qdrant_config()
     client = _client()
     collection = config["collection"]
