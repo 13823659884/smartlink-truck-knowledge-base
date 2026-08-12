@@ -21,6 +21,20 @@ const state = {
   intent: "all",
   intents: fallbackIntents,
 };
+const batchState = {
+  rows: [],
+  answers: new Map(),
+  exportRows: [],
+  running: false,
+  stopRequested: false,
+  mode: "fast",
+};
+const batchCategories = [
+  ["fault_code", "故障码查询"], ["symptom_diagnosis", "故障诊断"],
+  ["usage", "用车与操作"], ["maintenance", "保养知识"],
+  ["warranty", "保用保修"], ["service_technical", "服务咨询"],
+  ["drawing", "图纸电路"], ["vin", "VIN查询"], ["general", "通用知识"],
+];
 const $ = (id) => document.getElementById(id);
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[char]);
 
@@ -29,6 +43,16 @@ async function getJson(url, options) {
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || "请求失败");
   return data;
+}
+
+async function getBlob(url, options) {
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    const text = await response.text();
+    try { throw new Error(JSON.parse(text).error || `请求失败（${response.status}）`); }
+    catch (error) { if (error instanceof SyntaxError) throw new Error(`请求失败（${response.status}）`); throw error; }
+  }
+  return response.blob();
 }
 
 async function getStream(url, options, handlers = {}) {
@@ -301,6 +325,233 @@ function setupVoiceInput() {
   button.addEventListener("click", () => recognition.start());
 }
 
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || "").split(",", 2)[1] || "");
+    reader.onerror = () => reject(new Error("读取Excel文件失败"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function updateBatchSummary(statusText = "") {
+  const completed = batchState.rows.filter((row) => ["success", "failed"].includes(row.status)).length;
+  const failed = batchState.rows.filter((row) => row.status === "failed").length;
+  const percent = batchState.rows.length ? Math.round(completed / batchState.rows.length * 100) : 0;
+  $("batchTotal").textContent = batchState.rows.length;
+  $("batchCompleted").textContent = completed;
+  $("batchFailed").textContent = failed;
+  $("batchPairCount").textContent = batchState.exportRows.filter((row) => row.status === "成功").length;
+  $("batchPercent").textContent = `${percent}%`;
+  $("batchProgress").value = percent;
+  if (statusText) $("batchStatusText").textContent = statusText;
+  $("batchStartButton").disabled = batchState.running || !batchState.rows.length;
+  $("batchStopButton").disabled = !batchState.running;
+  $("batchExportButton").disabled = batchState.running || !batchState.exportRows.length;
+}
+
+function batchStatusLabel(status) {
+  return { pending: "待处理", running: "生成中", success: "已完成", failed: "失败", stopped: "已停止" }[status] || "待处理";
+}
+
+function renderBatchRows() {
+  if (!batchState.rows.length) {
+    $("batchTableBody").innerHTML = '<tr class="batch-empty-row"><td colspan="7">请选择包含“故障现象”或“客户询问问题”列的Excel文件</td></tr>';
+    return;
+  }
+  $("batchTableBody").innerHTML = batchState.rows.map((row, index) => {
+    const answer = batchState.answers.get(row.id);
+    const pairs = answer?.pairs?.length ? answer.pairs : [{}];
+    return pairs.map((pair, pairIndex) => `<tr data-batch-row="${esc(row.id)}">
+      <td>${pairIndex ? "" : index + 1}</td>
+      <td>${pairIndex ? "" : esc(row.vehicle_series)}</td>
+      <td>${pairIndex ? "" : `<select class="batch-category-select" data-category-row="${esc(row.id)}" ${batchState.running ? "disabled" : ""}>${batchCategories.map(([value, label]) => `<option value="${value}" ${row.task_type === value ? "selected" : ""}>${label}</option>`).join("")}</select><small class="batch-category-reason">${esc(row.reason || "自动识别")}</small>`}</td>
+      <td>${pairIndex ? "" : esc(row.original_question || row.symptom)}</td>
+      <td>${pairIndex ? "" : esc(row.engineer_question || row.symptom)}</td>
+      <td>${esc(pair.cause || (row.error ? `处理失败：${row.error}` : "—"))}</td>
+      <td>${esc(pair.repair_plan || "—")}${pair.verification ? `<br><small>验证：${esc(pair.verification)}</small>` : ""}</td>
+      <td>${pairIndex ? "" : `<span class="batch-status-pill ${esc(row.status || "pending")}">${batchStatusLabel(row.status)}</span>`}</td>
+    </tr>`).join("");
+  }).join("");
+  document.querySelectorAll("[data-category-row]").forEach((select) => select.addEventListener("change", () => {
+    const row = batchState.rows.find((item) => item.id === select.dataset.categoryRow);
+    if (!row) return;
+    row.task_type = select.value;
+    row.task_label = batchCategories.find(([value]) => value === select.value)?.[1] || select.value;
+    row.reason = "用户手动修正分类";
+    row.automatic = false;
+    renderBatchRows();
+  }));
+}
+
+function openBatchModal() {
+  $("batchModal").classList.remove("hidden");
+  document.body.classList.add("batch-open");
+}
+
+function closeBatchModal() {
+  if (batchState.running && !confirm("批量回答仍在进行，关闭窗口不会停止任务。确定关闭吗？")) return;
+  $("batchModal").classList.add("hidden");
+  document.body.classList.remove("batch-open");
+}
+
+async function importBatchFile(file) {
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith(".xlsx")) {
+    alert("目前支持.xlsx格式，请将旧版.xls另存为.xlsx后导入。");
+    return;
+  }
+  batchState.rows = [];
+  batchState.answers.clear();
+  batchState.exportRows = [];
+  updateBatchSummary(`正在读取 ${file.name}`);
+  renderBatchRows();
+  try {
+    const data = await getJson("/api/batch/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file_name: file.name,
+        file_base64: await fileToBase64(file),
+        default_vehicle_series: $("batchDefaultSeries").value.trim() || "JH6",
+      }),
+    });
+    batchState.rows = data.rows.map((row) => ({ ...row, status: "pending", error: "" }));
+    renderBatchRows();
+    const categoryCounts = new Map();
+    batchState.rows.forEach((row) => categoryCounts.set(row.task_label, (categoryCounts.get(row.task_label) || 0) + 1));
+    const categorySummary = [...categoryCounts.entries()].map(([label, count]) => `${label}${count}条`).join("、");
+    updateBatchSummary(`已导入 ${data.count} 条：${categorySummary}${data.skipped ? `；跳过 ${data.skipped} 条空行` : ""}`);
+  } catch (error) {
+    updateBatchSummary(`导入失败：${error.message}`);
+    alert(error.message);
+  }
+}
+
+function referenceText(references) {
+  return (references || []).map((item) => `资料${item.index}：${item.file_name}${item.source_locator ? `（${item.source_locator}）` : ""}`).join("\n");
+}
+
+function appendBatchExportRows(row, data) {
+  const base = {
+    sheet: row.sheet,
+    source_row: row.source_row,
+    vehicle_series: row.vehicle_series,
+    original_question: row.original_question || row.symptom,
+    engineer_question: row.engineer_question || row.symptom,
+    task_type: row.task_type,
+    task_label: data?.classification?.task_label || row.task_label,
+    summary: data?.summary || "",
+    safety_notice: data?.safety_notice || "",
+    references: referenceText(data?.references),
+    model: data?.agent?.model || "",
+  };
+  if (row.status === "success") {
+    (data.pairs || []).forEach((pair) => batchState.exportRows.push({
+      ...base,
+      cause: pair.cause || "",
+      repair_plan: pair.repair_plan || "",
+      verification: pair.verification || "",
+      status: "成功",
+      error: "",
+    }));
+  } else {
+    batchState.exportRows.push({ ...base, cause: "", repair_plan: "", verification: "", status: "失败", error: row.error || "未知错误" });
+  }
+}
+
+async function startBatchDiagnosis() {
+  if (batchState.running || !batchState.rows.length) return;
+  batchState.running = true;
+  batchState.stopRequested = false;
+  batchState.answers.clear();
+  batchState.exportRows = [];
+  batchState.rows.forEach((row) => { row.status = "pending"; row.error = ""; });
+  renderBatchRows();
+  updateBatchSummary("批量回答开始");
+  for (let index = 0; index < batchState.rows.length; index += 1) {
+    if (batchState.stopRequested) break;
+    const row = batchState.rows[index];
+    row.status = "running";
+    renderBatchRows();
+    updateBatchSummary(`正在处理第 ${index + 1}/${batchState.rows.length} 条：${row.symptom.slice(0, 28)}`);
+    try {
+      const data = await getJson("/api/batch/diagnose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vehicle_series: row.vehicle_series,
+          symptom: row.original_question || row.symptom,
+          engineer_question: row.engineer_question || row.symptom,
+          task_type: row.task_type,
+          answer_mode: batchState.mode,
+        }),
+      });
+      row.status = "success";
+      batchState.answers.set(row.id, data);
+      appendBatchExportRows(row, data);
+    } catch (error) {
+      row.status = "failed";
+      row.error = error.message;
+      appendBatchExportRows(row, null);
+      if (error.message.includes("月度套餐额度已用完")) {
+        batchState.stopRequested = true;
+      }
+    }
+    renderBatchRows();
+    updateBatchSummary(`已完成 ${index + 1}/${batchState.rows.length} 条`);
+  }
+  if (batchState.stopRequested) {
+    batchState.rows.filter((row) => row.status === "pending").forEach((row) => { row.status = "stopped"; });
+  }
+  batchState.running = false;
+  renderBatchRows();
+  updateBatchSummary(batchState.stopRequested ? "批量回答已停止，可导出已完成结果" : "批量回答完成，可以导出Excel");
+}
+
+async function exportBatchResults() {
+  if (!batchState.exportRows.length) return;
+  $("batchExportButton").disabled = true;
+  $("batchStatusText").textContent = "正在生成Excel文件";
+  try {
+    const blob = await getBlob("/api/batch/export", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rows: batchState.exportRows }),
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `JH6批量诊断结果_${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}.xlsx`;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    $("batchStatusText").textContent = "Excel导出完成";
+  } catch (error) {
+    $("batchStatusText").textContent = `导出失败：${error.message}`;
+    alert(error.message);
+  } finally {
+    $("batchExportButton").disabled = !batchState.exportRows.length;
+  }
+}
+
+function setupBatchDiagnosis() {
+  $("batchButton").addEventListener("click", openBatchModal);
+  $("batchCloseButton").addEventListener("click", closeBatchModal);
+  document.querySelectorAll("[data-batch-close]").forEach((node) => node.addEventListener("click", closeBatchModal));
+  $("batchFile").addEventListener("change", (event) => importBatchFile(event.target.files?.[0]));
+  document.querySelectorAll("[data-batch-mode]").forEach((button) => button.addEventListener("click", () => {
+    batchState.mode = button.dataset.batchMode;
+    document.querySelectorAll("[data-batch-mode]").forEach((item) => item.classList.toggle("active", item === button));
+  }));
+  $("batchStartButton").addEventListener("click", startBatchDiagnosis);
+  $("batchStopButton").addEventListener("click", () => { batchState.stopRequested = true; $("batchStatusText").textContent = "将在当前问题完成后停止"; });
+  $("batchExportButton").addEventListener("click", exportBatchResults);
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !$("batchModal").classList.contains("hidden")) closeBatchModal(); });
+  updateBatchSummary();
+}
+
 series.forEach((value) => { const option = document.createElement("option"); option.value = value; option.textContent = value; $("vehicleSeries").append(option); });
 $("askForm").addEventListener("submit", (event) => { event.preventDefault(); const question = $("question").value.trim(); if (question) { $("question").value = ""; ask(question); } });
 $("question").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); $("askForm").requestSubmit(); } });
@@ -308,4 +559,4 @@ document.querySelectorAll(".quick button").forEach((button) => button.addEventLi
 document.querySelectorAll(".desktop-mode-option").forEach((button) => button.addEventListener("click", () => applyAnswerMode(button.dataset.mode)));
 document.querySelectorAll(".tabs button").forEach((button) => button.addEventListener("click", () => { document.querySelectorAll(".tabs button").forEach((item) => item.classList.toggle("active", item === button)); document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("hidden", panel.id !== button.dataset.tab)); }));
 $("historyButton").addEventListener("click", () => document.querySelector('.tabs button[data-tab="history"]')?.click());
-applyAnswerMode(state.answerMode); renderCapabilities(); loadCapabilities(); loadStats(); loadHistory(); setupVoiceInput();
+applyAnswerMode(state.answerMode); renderCapabilities(); loadCapabilities(); loadStats(); loadHistory(); setupVoiceInput(); setupBatchDiagnosis();

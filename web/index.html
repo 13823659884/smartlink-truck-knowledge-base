@@ -19,6 +19,7 @@
       </div>
       <div class="header-actions">
         <span id="health" class="status"><i></i>正在连接知识库</span>
+        <button id="batchButton" type="button" class="batch-entry"><span>表</span> 批量诊断</button>
         <a href="/mini/" class="mini-link"><span>▦</span> 小程序版</a>
       </div>
     </header>
@@ -127,6 +128,57 @@
         </div>
       </aside>
     </main>
+
+    <div id="batchModal" class="batch-modal hidden" role="dialog" aria-modal="true" aria-labelledby="batchTitle">
+      <div class="batch-backdrop" data-batch-close></div>
+      <section class="batch-dialog">
+        <header class="batch-header">
+          <div>
+            <span class="batch-kicker">BATCH DIAGNOSIS</span>
+            <h2 id="batchTitle">车辆问题批量诊断</h2>
+            <p>导入车系与故障现象，批量生成一条原因对应一条维修方案的结果表。</p>
+          </div>
+          <button id="batchCloseButton" type="button" class="batch-close" aria-label="关闭">×</button>
+        </header>
+
+        <div class="batch-toolbar">
+          <label class="batch-file-button">
+            <input id="batchFile" type="file" accept=".xlsx" />
+            <span>＋</span><b>选择Excel文件</b>
+          </label>
+          <label class="batch-default-series"><span>默认车系</span><input id="batchDefaultSeries" value="JH6" /></label>
+          <div class="batch-mode" role="group" aria-label="批量回答模式">
+            <button type="button" class="active" data-batch-mode="fast">快速批量</button>
+            <button type="button" data-batch-mode="deep">深度批量</button>
+          </div>
+          <button id="batchStartButton" type="button" class="batch-primary" disabled>开始批量回答</button>
+          <button id="batchStopButton" type="button" class="batch-secondary" disabled>停止</button>
+          <button id="batchExportButton" type="button" class="batch-export" disabled>导出Excel</button>
+        </div>
+
+        <div class="batch-summary">
+          <div><span>已导入</span><b id="batchTotal">0</b></div>
+          <div><span>已完成</span><b id="batchCompleted">0</b></div>
+          <div><span>原因方案</span><b id="batchPairCount">0</b></div>
+          <div><span>失败</span><b id="batchFailed">0</b></div>
+          <div class="batch-progress-wrap">
+            <div><span id="batchStatusText">等待导入Excel</span><b id="batchPercent">0%</b></div>
+            <progress id="batchProgress" max="100" value="0"></progress>
+          </div>
+        </div>
+
+        <div class="batch-table-wrap">
+          <table class="batch-table">
+            <thead><tr><th>序号</th><th>车系</th><th>自动分类</th><th>客服原始问题</th><th>工程师问题</th><th>原因/结论</th><th>对应处理方案</th><th>状态</th></tr></thead>
+            <tbody id="batchTableBody"><tr class="batch-empty-row"><td colspan="7">请选择包含“故障现象”或“客户询问问题”列的Excel文件</td></tr></tbody>
+          </table>
+        </div>
+        <footer class="batch-footer">
+          <span>自动识别故障码、故障诊断、用车、保养、保用、服务、图纸、VIN；分类可手动修正。</span>
+          <span>每次处理会消耗模型Token，请按需选择快速或深度模式。</span>
+        </footer>
+      </section>
+    </div>
     <script src="/app.js"></script>
   </body>
 </html>

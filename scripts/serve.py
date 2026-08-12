@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 from doubao_client import (
     agent_status,
+    generate_batch_diagnosis,
     generate_grounded_answer,
     generate_grounded_answer_stream,
 )
@@ -36,6 +37,13 @@ from ocr_engine import ocr_status, recognize_image_bytes
 from query_kb import fetch_triples, search_knowledge_base, warm_chunk_cache
 from qdrant_store import semantic_search, status as qdrant_status
 from source_preview import create_preview
+from task_router import (
+    TASK_LABELS,
+    TASK_SCENES,
+    classify_batch_question,
+    normalize_task_type,
+    rewrite_engineer_question,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -481,6 +489,55 @@ def enrich_sources(
     result["reference_materials"] = references
 
 
+def batch_fallback_pairs(
+    sources: list[dict[str, object]], limit: int = 4
+) -> list[dict[str, str]]:
+    """Build traceable provisional pairs when the generation API is unavailable."""
+    pairs: list[dict[str, str]] = []
+    seen: set[str] = set()
+    cause_markers = re.compile(
+        r"(?:可能原因|故障原因|原因|根因)\s*[:：]?\s*([^。；\n]{4,120})"
+    )
+    repair_markers = re.compile(
+        r"(?:处理方法|维修方法|维修措施|排查方法|处理措施|解决方法)\s*[:：]?\s*([^\n]{6,260})"
+    )
+    for index, source in enumerate(sources[:10], start=1):
+        excerpt = re.sub(r"\s+", " ", str(source.get("excerpt", ""))).strip()
+        if not excerpt:
+            continue
+        cause_match = cause_markers.search(excerpt)
+        repair_match = repair_markers.search(excerpt)
+        cause = cause_match.group(1).strip(" ：:，,。；;") if cause_match else ""
+        # Fallback export must not turn an arbitrary retrieved sentence into a
+        # diagnosis. Keep only evidence containing an explicit cause label.
+        if not cause or not repair_match or cause.lower().startswith("ppt"):
+            continue
+        normalized = re.sub(r"\W+", "", cause)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        repair_plan = (
+            repair_match.group(1).strip()
+            if repair_match
+            else (
+                "1. 按该资料定位相关系统与部件；"
+                "2. 对照有效版维修手册检查线路、连接器、供电及部件状态；"
+                "3. 确认异常后修复或更换，并清除故障后复测。"
+            )
+        )
+        pairs.append(
+            {
+                "cause": cause,
+                "repair_plan": repair_plan,
+                "verification": "修复后复现原工况，确认故障现象消失且相关故障码不再出现。",
+                "evidence": f"资料{index}",
+            }
+        )
+        if len(pairs) >= limit:
+            break
+    return pairs
+
+
 class KnowledgeHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -888,6 +945,15 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         try:
             payload = self.read_json()
+            if parsed.path == "/api/batch/import":
+                self.handle_batch_import(payload)
+                return
+            if parsed.path == "/api/batch/diagnose":
+                self.handle_batch_diagnose(payload)
+                return
+            if parsed.path == "/api/batch/export":
+                self.handle_batch_export(payload)
+                return
             if parsed.path == "/api/search/stream":
                 self.handle_search_stream(payload)
                 return
@@ -919,6 +985,277 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
                 {"error": f"{type(exc).__name__}: {exc}"},
                 HTTPStatus.INTERNAL_SERVER_ERROR,
             )
+
+    def handle_batch_import(self, payload: dict[str, object]) -> None:
+        encoded = str(payload.get("file_base64", "")).strip()
+        if encoded.startswith("data:"):
+            encoded = encoded.split(",", 1)[-1]
+        if not encoded:
+            raise ValueError("请选择需要导入的Excel文件")
+        try:
+            workbook_bytes = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("Excel文件内容无效") from exc
+        if len(workbook_bytes) > 10_000_000:
+            raise ValueError("单个Excel文件不能超过10MB")
+        try:
+            from openpyxl import load_workbook
+
+            workbook = load_workbook(
+                io.BytesIO(workbook_bytes), read_only=True, data_only=True
+            )
+        except Exception as exc:
+            raise ValueError(f"无法读取Excel文件：{exc}") from exc
+
+        series_aliases = ("车系", "车型", "车辆系列", "车系名称")
+        # Only consume a deliberately supplied question category. Columns such
+        # as “咨询类别2” describe how a call was handled (e.g. address-book
+        # transfer), not necessarily the semantic type of the vehicle question.
+        category_aliases = ("问题分类", "问题类别", "类别", "分类", "任务类型")
+        symptom_aliases = (
+            "故障现象", "客户询问问题", "车辆问题", "咨询问题", "问题",
+            "故障详情", "客户问题",
+        )
+        default_series = str(payload.get("default_vehicle_series", "JH6")).strip() or "JH6"
+        imported: list[dict[str, object]] = []
+        skipped = 0
+        sheets: list[str] = []
+        for worksheet in workbook.worksheets:
+            sheets.append(worksheet.title)
+            rows = worksheet.iter_rows(values_only=True)
+            try:
+                header_values = next(rows)
+            except StopIteration:
+                continue
+            headers = [str(value or "").strip() for value in header_values]
+
+            def column_index(aliases: tuple[str, ...]) -> int | None:
+                for alias in aliases:
+                    if alias in headers:
+                        return headers.index(alias)
+                for index, header in enumerate(headers):
+                    if any(alias in header for alias in aliases):
+                        return index
+                return None
+
+            symptom_index = column_index(symptom_aliases)
+            series_index = column_index(series_aliases)
+            category_index = next(
+                (headers.index(alias) for alias in category_aliases if alias in headers),
+                None,
+            )
+            if symptom_index is None:
+                continue
+            for excel_row, values in enumerate(rows, start=2):
+                symptom = (
+                    str(values[symptom_index] or "").strip()
+                    if symptom_index < len(values)
+                    else ""
+                )
+                if not symptom:
+                    skipped += 1
+                    continue
+                vehicle_series = default_series
+                if series_index is not None and series_index < len(values):
+                    vehicle_series = str(values[series_index] or "").strip() or default_series
+                explicit_category = ""
+                if category_index is not None and category_index < len(values):
+                    explicit_category = str(values[category_index] or "").strip()
+                classification = classify_batch_question(symptom, explicit_category)
+                rewritten = rewrite_engineer_question(symptom)
+                imported.append(
+                    {
+                        "id": uuid.uuid4().hex,
+                        "sheet": worksheet.title,
+                        "source_row": excel_row,
+                        "vehicle_series": vehicle_series,
+                        "symptom": symptom,
+                        "original_question": rewritten["original_question"],
+                        "engineer_question": rewritten["engineer_question"],
+                        **classification,
+                    }
+                )
+                if len(imported) >= 2000:
+                    raise ValueError("单次最多导入2000条问题")
+        if not imported:
+            raise ValueError(
+                "未找到问题列，请使用“故障现象”或“客户询问问题”作为列名"
+            )
+        self.send_json(
+            {
+                "rows": imported,
+                "count": len(imported),
+                "skipped": skipped,
+                "sheets": sheets,
+                "default_vehicle_series": default_series,
+            }
+        )
+
+    def handle_batch_diagnose(self, payload: dict[str, object]) -> None:
+        symptom = str(payload.get("symptom", "")).strip()
+        engineer_question = str(payload.get("engineer_question", "")).strip()
+        vehicle_series = str(payload.get("vehicle_series", "JH6")).strip() or "JH6"
+        answer_mode = "deep" if str(payload.get("answer_mode", "fast")) == "deep" else "fast"
+        requested_task = normalize_task_type(str(payload.get("task_type", "")))
+        rewritten = rewrite_engineer_question(engineer_question or symptom)
+        engineer_question = rewritten["engineer_question"]
+        classification = classify_batch_question(engineer_question, requested_task)
+        task_type = str(classification["task_type"])
+        task_label = str(classification["task_label"])
+        scene = str(classification["scene"])
+        if not symptom:
+            raise ValueError("故障现象不能为空")
+        if len(symptom) > 2000:
+            raise ValueError("单条故障现象不能超过2000字")
+        started = time.perf_counter()
+        result, cache_hit = cached_retrieval(
+            engineer_question,
+            vehicle_series,
+            scene,
+            "",
+            "",
+            task_type,
+        )
+        agent_result = generate_batch_diagnosis(
+            symptom=engineer_question,
+            sources=result.get("sources", []),
+            triples=result.get("triples", []),
+            vehicle_series=vehicle_series,
+            task_type=task_type,
+            task_label=task_label,
+            mode=answer_mode,
+        )
+        if not agent_result.get("ok"):
+            fallback_pairs = batch_fallback_pairs(result.get("sources", []))
+            if not fallback_pairs:
+                self.send_json(
+                    {"error": agent_result.get("error", "批量诊断失败")},
+                    HTTPStatus.BAD_GATEWAY,
+                )
+                return
+            agent_result = {
+                **agent_result,
+                "ok": True,
+                "fallback": True,
+                "summary": (
+                    "模型接口当前不可用，以下为知识库检索资料的临时整理结果；"
+                    "请由维修人员结合有效版手册复核。"
+                ),
+                "pairs": fallback_pairs,
+                "safety_notice": "安全关键系统请由合格维修人员按有效版维修手册操作。",
+            }
+        enrich_sources(result, include_images=False)
+        references = []
+        for index, source in enumerate(result.get("sources", [])[:10], start=1):
+            references.append(
+                {
+                    "index": index,
+                    "file_name": source.get("file_name", ""),
+                    "source_locator": source.get("source_locator", ""),
+                    "document_url": source.get("document_url", source.get("file_url", "")),
+                }
+            )
+        self.send_json(
+            {
+                "vehicle_series": vehicle_series,
+                "symptom": symptom,
+                "original_question": symptom,
+                "engineer_question": engineer_question,
+                "classification": classification,
+                "summary": agent_result.get("summary", ""),
+                "pairs": agent_result.get("pairs", []),
+                "safety_notice": agent_result.get("safety_notice", ""),
+                "references": references,
+                "agent": {
+                    key: value for key, value in agent_result.items()
+                    if key not in {"summary", "pairs", "safety_notice"}
+                },
+                "retrieval": {
+                    "cache_hit": cache_hit,
+                    "source_count": len(result.get("sources", [])),
+                    "backend": RETRIEVAL_BACKEND,
+                },
+                "timing_ms": round((time.perf_counter() - started) * 1000, 2),
+            }
+        )
+
+    def handle_batch_export(self, payload: dict[str, object]) -> None:
+        rows = payload.get("rows", [])
+        if not isinstance(rows, list) or not rows:
+            raise ValueError("没有可导出的批量诊断结果")
+        if len(rows) > 20_000:
+            raise ValueError("单次最多导出20000行")
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+        from openpyxl.utils import get_column_letter
+
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "批量诊断结果"
+        headers = [
+            "序号", "原始工作表", "原始行号", "车系", "问题分类", "客服原始问题", "工程师问题", "原因/结论",
+            "对应维修方案", "验证方法", "总体判断", "安全提示", "参考资料",
+            "处理状态", "错误信息", "回答模型",
+        ]
+        worksheet.append(headers)
+        for index, row in enumerate(rows, start=1):
+            if not isinstance(row, dict):
+                continue
+            worksheet.append(
+                [
+                    index,
+                    str(row.get("sheet", "")),
+                    row.get("source_row", ""),
+                    str(row.get("vehicle_series", "")),
+                    str(row.get("task_label", "")),
+                    str(row.get("original_question", row.get("symptom", ""))),
+                    str(row.get("engineer_question", "")),
+                    str(row.get("cause", "")),
+                    str(row.get("repair_plan", "")),
+                    str(row.get("verification", "")),
+                    str(row.get("summary", "")),
+                    str(row.get("safety_notice", "")),
+                    str(row.get("references", "")),
+                    str(row.get("status", "")),
+                    str(row.get("error", "")),
+                    str(row.get("model", "")),
+                ]
+            )
+        header_fill = PatternFill("solid", fgColor="0B5FA5")
+        header_font = Font(color="FFFFFF", bold=True)
+        thin = Side(style="thin", color="D9E2EC")
+        for cell in worksheet[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = Border(bottom=thin)
+        widths = [8, 14, 10, 10, 14, 34, 34, 34, 58, 30, 34, 30, 34, 12, 28, 24]
+        for index, width in enumerate(widths, start=1):
+            worksheet.column_dimensions[get_column_letter(index)].width = width
+        for row in worksheet.iter_rows(min_row=2):
+            for cell in row:
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+                cell.border = Border(bottom=thin)
+        worksheet.freeze_panes = "A2"
+        worksheet.auto_filter.ref = worksheet.dimensions
+        worksheet.row_dimensions[1].height = 28
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        data = buffer.getvalue()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.send_response(HTTPStatus.OK)
+        self.send_header(
+            "Content-Type",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.send_header(
+            "Content-Disposition",
+            f"attachment; filename=batch-diagnosis-{timestamp}.xlsx",
+        )
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
 
     def handle_search(
         self, payload: dict[str, object], force_agent: bool = False

@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
+_ARK_QUOTA_ERROR = ""
 
 
 def provider_details(model: str) -> tuple[str, str]:
@@ -40,7 +41,9 @@ def load_local_env() -> None:
 
 def agent_status() -> dict[str, Any]:
     load_local_env()
-    model = os.getenv("ARK_DEEP_MODEL", os.getenv("ARK_MODEL", "kimi-k3"))
+    model = os.getenv(
+        "ARK_DEEP_MODEL", os.getenv("ARK_MODEL", "deepseek-v4-pro-260425")
+    )
     fast_model = os.getenv(
         "ARK_FAST_MODEL", "doubao-seed-2-0-lite-260215"
     )
@@ -55,7 +58,7 @@ def agent_status() -> dict[str, Any]:
             "deep": {"model": model, "label": "深度诊断"},
         },
         "base_url": os.getenv(
-            "ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/plan/v3"
+            "ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"
         ),
     }
 
@@ -169,6 +172,36 @@ def open_json_with_retry(request: Request, timeout: int) -> dict[str, Any]:
     raise RuntimeError(f"火山方舟网络调用失败：{last_error}")
 
 
+def ark_http_error_message(exc: HTTPError) -> tuple[str, str]:
+    """Return a user-facing Ark error and its machine-readable code."""
+    detail = exc.read().decode("utf-8", errors="replace")[:2000]
+    code = ""
+    message = ""
+    try:
+        payload = json.loads(detail)
+        error = payload.get("error", {}) if isinstance(payload, dict) else {}
+        if isinstance(error, dict):
+            code = str(error.get("code", ""))
+            message = str(error.get("message", ""))
+    except json.JSONDecodeError:
+        pass
+    if code == "AccountQuotaExceeded":
+        reset_match = re.search(r"reset at ([^.]+)", message, flags=re.I)
+        reset_at = reset_match.group(1).strip() if reset_match else "套餐周期结束时"
+        return (
+            f"火山方舟月度套餐额度已用完，将于 {reset_at} 重置；"
+            "请升级套餐、购买额外额度或等待重置",
+            code,
+        )
+    if code == "AccountOverdueError" or "AccountOverdueError" in detail:
+        return "火山方舟账户欠费或余额异常，请在控制台处理后重试", code
+    if exc.code == 401:
+        return "火山方舟 API Key 无效或已失效", code
+    if exc.code == 429:
+        return "火山方舟请求频率或Token速率已达到上限，请稍后重试", code
+    return f"火山方舟 HTTP {exc.code}: {message or detail[:500]}", code
+
+
 def generate_grounded_answer(
     *,
     question: str,
@@ -184,7 +217,9 @@ def generate_grounded_answer(
     load_local_env()
     api_key = os.getenv("ARK_API_KEY", "").strip()
     mode = "fast" if mode == "fast" else "deep"
-    deep_model = os.getenv("ARK_DEEP_MODEL", os.getenv("ARK_MODEL", "kimi-k3"))
+    deep_model = os.getenv(
+        "ARK_DEEP_MODEL", os.getenv("ARK_MODEL", "deepseek-v4-pro-260425")
+    )
     model = (
         os.getenv("ARK_FAST_MODEL", "doubao-seed-2-0-lite-260215")
         if mode == "fast"
@@ -192,7 +227,7 @@ def generate_grounded_answer(
     ).strip()
     provider, _ = provider_details(model)
     base_url = os.getenv(
-        "ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/plan/v3"
+        "ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"
     ).rstrip("/")
     if not api_key:
         return {
@@ -268,7 +303,7 @@ def generate_grounded_answer(
     request_body = {
         "model": model,
         "input": prompt,
-        "thinking": {"type": "disabled"},
+        "thinking": {"type": "disabled" if mode == "fast" else "enabled"},
         "max_output_tokens": 1600 if mode == "fast" else 2600,
     }
     request = Request(
@@ -301,14 +336,7 @@ def generate_grounded_answer(
             "usage": payload.get("usage", {}),
         }
     except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:500]
-        friendly_error = f"火山方舟 HTTP {exc.code}: {detail}"
-        if "AccountOverdueError" in detail:
-            friendly_error = "火山方舟账户欠费或余额异常，请在控制台处理后重试"
-        elif exc.code == 401:
-            friendly_error = "火山方舟 API Key 无效或已失效"
-        elif exc.code == 429:
-            friendly_error = "火山方舟请求过于频繁，请稍后重试"
+        friendly_error, _ = ark_http_error_message(exc)
         return {
             "ok": False,
             "provider": provider,
@@ -321,6 +349,198 @@ def generate_grounded_answer(
             "provider": provider,
             "model": model,
             "error": f"火山方舟调用失败：{type(exc).__name__}: {exc}",
+        }
+
+
+def generate_batch_diagnosis(
+    *,
+    symptom: str,
+    sources: list[dict[str, Any]],
+    triples: list[dict[str, Any]],
+    vehicle_series: str = "JH6",
+    task_type: str = "symptom_diagnosis",
+    task_label: str = "故障诊断",
+    mode: str = "fast",
+    timeout: int = 120,
+) -> dict[str, Any]:
+    """Return cause-to-repair pairs for spreadsheet batch diagnosis."""
+    global _ARK_QUOTA_ERROR
+    if _ARK_QUOTA_ERROR:
+        return {"ok": False, "provider": "ark", "model": "", "error": _ARK_QUOTA_ERROR}
+    load_local_env()
+    api_key = os.getenv("ARK_API_KEY", "").strip()
+    mode = "deep" if mode == "deep" else "fast"
+    deep_model = os.getenv(
+        "ARK_DEEP_MODEL", os.getenv("ARK_MODEL", "deepseek-v4-pro-260425")
+    )
+    model = (
+        os.getenv("ARK_FAST_MODEL", "doubao-seed-2-0-lite-260215")
+        if mode == "fast"
+        else deep_model
+    ).strip()
+    provider, _ = provider_details(model)
+    base_url = os.getenv(
+        "ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"
+    ).rstrip("/")
+    if not api_key:
+        return {
+            "ok": False,
+            "provider": provider,
+            "model": model,
+            "error": "ARK_API_KEY 未配置",
+        }
+
+    evidence = _evidence_text(
+        sources,
+        triples,
+        source_limit=(6 if mode == "fast" else 10),
+        excerpt_limit=(750 if mode == "fast" else 1100),
+        triple_limit=(12 if mode == "fast" else 20),
+    )
+    task_guidance = {
+        "fault_code": (
+            "先给出故障码定义、涉及控制器/部件和触发条件；每条cause写可能根因，"
+            "repair_plan写对应诊断树与清码复测步骤。"
+        ),
+        "symptom_diagnosis": (
+            "输出3至6组按优先级排序的可能原因；每条cause写一种原因，"
+            "repair_plan写只针对该原因的检查、判断、维修和复测步骤。"
+        ),
+        "maintenance": (
+            "cause填写保养项目或适用条件，repair_plan填写对应保养周期、材料要求、"
+            "操作步骤和完成后的检查；不得把保养问题描述成车辆故障。"
+        ),
+        "warranty": (
+            "cause填写保用结论或适用/不适用条件，repair_plan填写对应的凭证核验、"
+            "进站鉴定和索赔办理步骤；没有明确条款时必须说明资料不足。"
+        ),
+        "usage": (
+            "cause填写功能说明、使用前提或当前问题原因，repair_plan填写对应的操作步骤、"
+            "注意事项和操作结果确认。"
+        ),
+        "service_technical": (
+            "cause填写服务事项或办理条件，repair_plan填写对应联系、预约、进站或资料准备步骤；"
+            "不得虚构电话、地址或收费标准。"
+        ),
+        "drawing": (
+            "cause填写所需图纸/系统或图纸适用条件，repair_plan填写查图、定位回路/部件和"
+            "按图检查的步骤。"
+        ),
+        "vin": (
+            "cause填写VIN识别结果或字段含义，repair_plan填写车辆信息核验与后续查询步骤；"
+            "不得虚构车辆静态字段。"
+        ),
+        "general": (
+            "根据资料给出问题要点；cause填写结论或关键说明，repair_plan填写对应处理或查询步骤。"
+        ),
+    }.get(task_type, "每一条结论必须有一条与之对应的处理方案。")
+    prompt = f"""你是商用车企业知识库的工程师诊断助手。车辆系列为{vehicle_series or '未指定'}。
+系统已将问题识别为“{task_label}”（任务代码：{task_type}）。用户问题：{symptom}。
+客服记录已经转换为工程师提问口吻。请使用工程师口吻回答，避免“客户来电、用户咨询、建议联系客户”等客服话术；直接描述系统、部件、检查项目和处理动作。
+只能依据下面的企业知识库证据回答，不得编造参数、故障码、保用条款、服务网点或维修结论。资料不足时在summary中明确说明缺少什么信息。
+
+当前类别回答要求：{task_guidance}
+
+通用要求：
+1. 每一条cause必须有且只能有一条与之对应的repair_plan，不要把多个原因或多个方案混在同一项。
+2. repair_plan应为可执行的有序步骤，尽量包含检查/查询对象、方法、判断依据和后续处理。
+3. verification填写结果验证或信息核验方法。
+4. evidence填写所依据的资料编号，例如“资料1、资料3”。
+5. 安全关键系统需提示由合格维修人员按有效版手册操作。
+
+严格输出JSON，不要输出Markdown代码块或JSON以外文字：
+{{
+  "summary": "总体判断或资料不足说明",
+  "pairs": [
+    {{
+      "cause": "故障原因",
+      "repair_plan": "1. 检查……；2. 判断……；3. 处理……",
+      "verification": "验证该原因的方法",
+      "evidence": "资料1"
+    }}
+  ],
+  "safety_notice": "安全提示"
+}}
+
+企业知识库证据：
+{evidence or '未检索到证据'}"""
+    request_body = {
+        "model": model,
+        "input": prompt,
+        "thinking": {"type": "disabled" if mode == "fast" else "enabled"},
+        "max_output_tokens": 1800 if mode == "fast" else 2800,
+    }
+    request = Request(
+        f"{base_url}/responses",
+        data=json.dumps(request_body, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        payload: dict[str, Any] | None = None
+        for attempt in range(4):
+            try:
+                payload = open_json_with_retry(request, timeout)
+                break
+            except HTTPError as exc:
+                if exc.code != 429 or attempt >= 3:
+                    raise
+                friendly_error, error_code = ark_http_error_message(exc)
+                if error_code == "AccountQuotaExceeded":
+                    _ARK_QUOTA_ERROR = friendly_error
+                    return {
+                        "ok": False,
+                        "provider": provider,
+                        "model": model,
+                        "error": friendly_error,
+                    }
+                time.sleep((2, 5, 10)[attempt])
+        if payload is None:
+            raise RuntimeError("批量诊断请求未完成")
+        parsed = _parse_json_content(_response_text(payload))
+        pairs: list[dict[str, str]] = []
+        for item in parsed.get("pairs", [])[:8]:
+            if not isinstance(item, dict):
+                continue
+            cause = str(item.get("cause", "")).strip()
+            repair_plan = str(item.get("repair_plan", "")).strip()
+            if not cause or not repair_plan:
+                continue
+            pairs.append(
+                {
+                    "cause": cause,
+                    "repair_plan": repair_plan,
+                    "verification": str(item.get("verification", "")).strip(),
+                    "evidence": str(item.get("evidence", "")).strip(),
+                }
+            )
+        if not pairs:
+            raise ValueError("模型未返回有效的原因—维修方案对应项")
+        return {
+            "ok": True,
+            "provider": provider,
+            "model": payload.get("model", model),
+            "mode": mode,
+            "summary": str(parsed.get("summary", "")).strip(),
+            "pairs": pairs,
+            "safety_notice": str(parsed.get("safety_notice", "")).strip(),
+            "usage": payload.get("usage", {}),
+        }
+    except HTTPError as exc:
+        error, error_code = ark_http_error_message(exc)
+        if error_code == "AccountQuotaExceeded":
+            _ARK_QUOTA_ERROR = error
+        return {"ok": False, "provider": provider, "model": model, "error": error}
+    except (URLError, TimeoutError, KeyError, ValueError, json.JSONDecodeError) as exc:
+        return {
+            "ok": False,
+            "provider": provider,
+            "model": model,
+            "error": f"批量诊断调用失败：{type(exc).__name__}: {exc}",
         }
 
 
@@ -356,7 +576,9 @@ def generate_grounded_answer_stream(
     load_local_env()
     api_key = os.getenv("ARK_API_KEY", "").strip()
     mode = "fast" if mode == "fast" else "deep"
-    deep_model = os.getenv("ARK_DEEP_MODEL", os.getenv("ARK_MODEL", "kimi-k3"))
+    deep_model = os.getenv(
+        "ARK_DEEP_MODEL", os.getenv("ARK_MODEL", "deepseek-v4-pro-260425")
+    )
     model = (
         os.getenv("ARK_FAST_MODEL", "doubao-seed-2-0-lite-260215")
         if mode == "fast"
@@ -364,7 +586,7 @@ def generate_grounded_answer_stream(
     ).strip()
     provider, _ = provider_details(model)
     base_url = os.getenv(
-        "ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/plan/v3"
+        "ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"
     ).rstrip("/")
     if not api_key:
         yield {
@@ -443,7 +665,7 @@ def generate_grounded_answer_stream(
     body = {
         "model": model,
         "input": prompt,
-        "thinking": {"type": "disabled"},
+        "thinking": {"type": "disabled" if mode == "fast" else "enabled"},
         "max_output_tokens": 1600 if mode == "fast" else 2600,
         "stream": True,
     }
@@ -491,14 +713,14 @@ def generate_grounded_answer_stream(
             "usage": completed_response.get("usage", {}),
         }
     except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:500]
+        friendly_error, _ = ark_http_error_message(exc)
         yield {
             "type": "done",
             "ok": False,
             "provider": provider,
             "model": model,
             "mode": mode,
-            "error": f"火山方舟 HTTP {exc.code}: {detail}",
+            "error": friendly_error,
         }
     except (URLError, TimeoutError, RuntimeError, ValueError) as exc:
         yield {
