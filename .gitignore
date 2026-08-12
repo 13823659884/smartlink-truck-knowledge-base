@@ -11,3 +11,4 @@ tools/python_packages/
 *.sqlite3
 *.log
 *.tmp
+~$*
