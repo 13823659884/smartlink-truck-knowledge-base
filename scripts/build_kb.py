@@ -607,10 +607,11 @@ def import_graph(
             )
 
     triples_path.parent.mkdir(parents=True, exist_ok=True)
-    with triples_path.open("w", encoding="utf-8-sig", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=list(exported[0].keys()))
-        writer.writeheader()
-        writer.writerows(exported)
+    if exported:
+        with triples_path.open("w", encoding="utf-8-sig", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=list(exported[0].keys()))
+            writer.writeheader()
+            writer.writerows(exported)
     return {"entities": len(nodes), "triples": len(exported)}
 
 

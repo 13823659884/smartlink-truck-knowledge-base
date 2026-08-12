@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import shutil
 import subprocess
 import sys
@@ -44,6 +45,19 @@ def pdftoppm_path() -> str:
         Path(r"D:\texlive\texlive\2024\bin\windows\pdftoppm.exe"),
         Path(r"C:\Program Files\poppler\Library\bin\pdftoppm.exe"),
     ]
+    # 扫描 WinGet 安装的 poppler（支持多版本）
+    winget_root = Path(
+        os.getenv("LOCALAPPDATA", "")
+    ) / "Microsoft" / "WinGet" / "Packages"
+    if winget_root.exists():
+        for pkg in winget_root.iterdir():
+            if not pkg.is_dir() or "oppler" not in pkg.name.lower():
+                continue
+            # winget 包下可能有版本子目录
+            for root in [pkg] + [d for d in pkg.iterdir() if d.is_dir()]:
+                candidate = root / "Library" / "bin" / "pdftoppm.exe"
+                if candidate.exists():
+                    candidates.append(candidate)
     for candidate in candidates:
         if candidate.exists():
             return str(candidate)

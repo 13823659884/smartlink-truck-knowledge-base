@@ -256,6 +256,9 @@ def build_index(
 ) -> dict[str, Any]:
     if not database_path.exists():
         raise FileNotFoundError(f"知识库数据库不存在：{database_path}")
+    task_db_path = database_path.parent / "task_index.db"
+    if not task_db_path.exists():
+        raise FileNotFoundError(f"任务索引数据库不存在：{task_db_path}，请先运行 build_task_index.py")
     config = vision_config()
     _enable_local_packages()
     from qdrant_client import QdrantClient
@@ -287,6 +290,10 @@ def build_index(
 
     with sqlite3.connect(database_path) as connection:
         connection.row_factory = sqlite3.Row
+        # 排除故障码和电路图：这两类走精确匹配/视觉向量，不需要文字语义向量
+        connection.execute(
+            f"ATTACH DATABASE '{task_db_path}' AS task_db"
+        )
         rows = connection.execute(
             """
             SELECT c.id, c.document_id, c.content, c.source_locator,
@@ -294,7 +301,10 @@ def build_index(
                    d.relative_path, d.file_name
             FROM chunks c
             JOIN documents d ON d.id = c.document_id
+            LEFT JOIN task_db.chunk_categories cat ON cat.chunk_id = c.id
             WHERE d.enabled = 1
+              AND (cat.primary_task IS NULL
+                   OR cat.primary_task NOT IN ('fault_code', 'drawing'))
             ORDER BY c.id
             """
         ).fetchall()
