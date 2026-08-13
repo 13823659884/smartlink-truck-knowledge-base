@@ -598,6 +598,98 @@ function setupBatchDiagnosis() {
   updateBatchSummary();
 }
 
+const importDocState = { file: null, running: false };
+
+function openImportDocModal() {
+  $("importDocModal").classList.remove("hidden");
+  document.body.classList.add("batch-open");
+}
+
+function closeImportDocModal() {
+  if (importDocState.running && !confirm("文档导入仍在进行，关闭窗口不会中断服务端处理。确定关闭吗？")) return;
+  $("importDocModal").classList.add("hidden");
+  document.body.classList.remove("batch-open");
+}
+
+function escDoc(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[char]);
+}
+
+function renderImportDocResult(report) {
+  const body = $("importDocResultBody");
+  body.innerHTML = "";
+  const row = document.createElement("tr");
+  const task = report.task || {};
+  const cells = [
+    `${escDoc(report.file_name)}${report.superseded ? `（停用旧版本 ${report.superseded} 份）` : ""}`,
+    escDoc(report.scene),
+    String(report.chunks ?? 0),
+    report.vector_failed ? `${report.vectorized}/${report.chunks}（失败${report.vector_failed}）` : String(report.vectorized ?? 0),
+    escDoc(task.task_label || "—"),
+    report.ok ? "已导入" : "失败",
+  ];
+  cells.forEach((text) => {
+    const cell = document.createElement("td");
+    cell.textContent = text;
+    row.appendChild(cell);
+  });
+  body.appendChild(row);
+}
+
+async function importDocumentFile() {
+  const file = importDocState.file;
+  if (!file || importDocState.running) return;
+  if (!/\.(pdf|docx|pptx|xlsx|doc|xls)$/i.test(file.name)) {
+    alert("不支持的文件格式，支持：pdf、docx、pptx、xlsx、doc、xls。");
+    return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    alert("单个文档不能超过10MB。");
+    return;
+  }
+  importDocState.running = true;
+  $("importDocStartButton").disabled = true;
+  $("importDocProgress").value = 0;
+  $("importDocStatusText").textContent = `正在导入 ${file.name}（解析、切片、向量化可能需要数分钟）`;
+  $("importDocResultBody").innerHTML = '<tr class="batch-empty-row"><td colspan="6">处理中，请保持页面打开…</td></tr>';
+  try {
+    const report = await getJson("/api/import/document", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        file_name: file.name,
+        file_base64: await fileToBase64(file),
+        scene: $("importDocScene").value,
+      }),
+    });
+    $("importDocProgress").value = 100;
+    $("importDocStatusText").textContent = `导入完成：${report.chunks} 个切片，向量化 ${report.vectorized} 条，耗时 ${report.elapsed_seconds} 秒`;
+    renderImportDocResult(report);
+    loadStats();
+  } catch (error) {
+    $("importDocProgress").value = 100;
+    $("importDocStatusText").textContent = `导入失败：${error.message}`;
+    $("importDocResultBody").innerHTML = `<tr class="batch-empty-row"><td colspan="6">导入失败：${escDoc(error.message)}</td></tr>`;
+  } finally {
+    importDocState.running = false;
+    $("importDocStartButton").disabled = !importDocState.file;
+  }
+}
+
+function setupDocumentImport() {
+  $("importDocButton").addEventListener("click", openImportDocModal);
+  $("importDocCloseButton").addEventListener("click", closeImportDocModal);
+  document.querySelectorAll("[data-import-doc-close]").forEach((node) => node.addEventListener("click", closeImportDocModal));
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !$("importDocModal").classList.contains("hidden")) closeImportDocModal(); });
+  $("importDocFile").addEventListener("change", (event) => {
+    const file = event.target.files?.[0];
+    importDocState.file = file || null;
+    $("importDocStartButton").disabled = !file;
+    $("importDocStatusText").textContent = file ? `已选择 ${file.name}（${(file.size / 1024 / 1024).toFixed(2)} MB）` : "等待选择文档";
+  });
+  $("importDocStartButton").addEventListener("click", importDocumentFile);
+}
+
 series.forEach((value) => { const option = document.createElement("option"); option.value = value; option.textContent = value; $("vehicleSeries").append(option); });
 $("askForm").addEventListener("submit", (event) => { event.preventDefault(); const question = $("question").value.trim(); if (question) { $("question").value = ""; ask(question); } });
 $("question").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); $("askForm").requestSubmit(); } });
@@ -605,4 +697,4 @@ document.querySelectorAll(".quick button").forEach((button) => button.addEventLi
 document.querySelectorAll(".desktop-mode-option").forEach((button) => button.addEventListener("click", () => applyAnswerMode(button.dataset.mode)));
 document.querySelectorAll(".tabs button").forEach((button) => button.addEventListener("click", () => { document.querySelectorAll(".tabs button").forEach((item) => item.classList.toggle("active", item === button)); document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("hidden", panel.id !== button.dataset.tab)); }));
 $("historyButton").addEventListener("click", () => document.querySelector('.tabs button[data-tab="history"]')?.click());
-applyAnswerMode(state.answerMode); renderCapabilities(); loadCapabilities(); loadStats(); loadHistory(); setupVoiceInput(); setupBatchDiagnosis();
+applyAnswerMode(state.answerMode); renderCapabilities(); loadCapabilities(); loadStats(); loadHistory(); setupVoiceInput(); setupBatchDiagnosis(); setupDocumentImport();

@@ -19,6 +19,7 @@
       </div>
       <div class="header-actions">
         <span id="health" class="status"><i></i>正在连接知识库</span>
+        <button id="importDocButton" type="button" class="batch-entry"><span>文</span> 文档导入</button>
         <button id="batchButton" type="button" class="batch-entry"><span>表</span> 批量诊断</button>
         <a href="/mini/" class="mini-link"><span>▦</span> 小程序版</a>
       </div>
@@ -179,6 +180,58 @@
         </footer>
       </section>
     </div>
+    <div id="importDocModal" class="batch-modal hidden" role="dialog" aria-modal="true" aria-labelledby="importDocTitle">
+      <div class="batch-backdrop" data-import-doc-close></div>
+      <section class="batch-dialog import-doc-dialog">
+        <header class="batch-header">
+          <div>
+            <span class="batch-kicker">DOCUMENT INGEST</span>
+            <h2 id="importDocTitle">文档导入知识库</h2>
+            <p>上传一份文档，自动完成解析、切片、向量化与任务分类，导入后立即可检索。</p>
+          </div>
+          <button id="importDocCloseButton" type="button" class="batch-close" aria-label="关闭">×</button>
+        </header>
+
+        <div class="batch-toolbar">
+          <label class="batch-file-button">
+            <input id="importDocFile" type="file" accept=".pdf,.docx,.pptx,.xlsx,.doc,.xls" />
+            <span>＋</span><b>选择文档</b>
+          </label>
+          <label class="batch-default-series"><span>知识场景</span>
+            <select id="importDocScene">
+              <option value="">自动识别</option>
+              <option value="修">修</option>
+              <option value="用">用</option>
+              <option value="养">养</option>
+              <option value="保">保</option>
+              <option value="其他">其他</option>
+            </select>
+          </label>
+          <button id="importDocStartButton" type="button" class="batch-primary" disabled>开始导入</button>
+        </div>
+
+        <div class="batch-summary">
+          <div class="batch-progress-wrap">
+            <div><span id="importDocStatusText">等待选择文档</span></div>
+            <progress id="importDocProgress" max="100" value="0"></progress>
+          </div>
+        </div>
+
+        <div class="batch-table-wrap">
+          <table class="batch-table">
+            <thead><tr><th>文件</th><th>场景</th><th>切片</th><th>向量化</th><th>自动分类</th><th>状态</th></tr></thead>
+            <tbody id="importDocResultBody">
+              <tr class="batch-empty-row"><td colspan="6">支持 PDF / Word / PPT / Excel / 旧版 doc、xls；扫描件 PDF 将自动 OCR。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <footer class="batch-footer">
+          <span>导入文件保存在知识库数据源的“导入”目录，重复导入会按版本管理规则停用旧版本。</span>
+          <span>单文档不超过 10MB；扫描件 OCR 与向量化需要数分钟，请耐心等待。</span>
+        </footer>
+      </section>
+    </div>
+
     <script src="/app.js"></script>
   </body>
 </html>

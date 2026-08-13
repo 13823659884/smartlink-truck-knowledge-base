@@ -403,3 +403,5 @@ body.batch-open { overflow: hidden; }
   .conversation { min-height: 300px; }
   .batch-entry { display: none; }
 }
+
+.import-doc-dialog { width: min(760px, 96vw); height: min(560px, 92vh); }

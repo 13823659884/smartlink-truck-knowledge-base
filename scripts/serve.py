@@ -671,7 +671,7 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
 
     def read_json(self) -> dict[str, object]:
         length = int(self.headers.get("Content-Length", "0") or "0")
-        if length <= 0 or length > 12_000_000:
+        if length <= 0 or length > 20_000_000:
             raise ValueError("请求体为空或过大")
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
@@ -1021,6 +1021,9 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/batch/import":
                 self.handle_batch_import(payload)
                 return
+            if parsed.path == "/api/import/document":
+                self.handle_document_import(payload)
+                return
             if parsed.path == "/api/batch/diagnose":
                 self.handle_batch_diagnose(payload)
                 return
@@ -1058,6 +1061,33 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
                 {"error": f"{type(exc).__name__}: {exc}"},
                 HTTPStatus.INTERNAL_SERVER_ERROR,
             )
+
+    def handle_document_import(self, payload: dict[str, object]) -> None:
+        file_name = str(payload.get("file_name", "")).strip()
+        scene = str(payload.get("scene", "")).strip()
+        encoded = str(payload.get("file_base64", "")).strip()
+        if encoded.startswith("data:"):
+            encoded = encoded.split(",", 1)[-1]
+        if not encoded:
+            raise ValueError("请选择需要导入的文档")
+        try:
+            upload_bytes = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("文档内容无效") from exc
+        # 延迟导入，避免服务启动时加载解析依赖；导入在服务进程内执行，
+        # 复用已打开的豆包向量库客户端，不会产生存储目录锁冲突。
+        from document_importer import DocumentImportError, import_document
+
+        try:
+            report = import_document(
+                upload_bytes,
+                file_name,
+                scene=scene,
+                config=CONFIG,
+            )
+        except DocumentImportError as exc:
+            raise ValueError(str(exc)) from exc
+        self.send_json(report)
 
     def handle_batch_import(self, payload: dict[str, object]) -> None:
         encoded = str(payload.get("file_base64", "")).strip()
