@@ -68,7 +68,7 @@ def vision_config() -> dict[str, Any]:
             "DOUBAO_EMBEDDING_URL",
             configured.get(
                 "embedding_url",
-                "https://ark.cn-beijing.volces.com/api/plan/v3/embeddings/multimodal",
+                "https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal",
             ),
         )
     ).rstrip("/")
@@ -93,7 +93,7 @@ def vision_config() -> dict[str, Any]:
         "model": str(
             os.getenv(
                 "DOUBAO_EMBEDDING_MODEL",
-                configured.get("embedding_model", "doubao-embedding-vision"),
+                configured.get("embedding_model", "doubao-embedding-vision-250615"),
             )
         ),
         "dimensions": int(
@@ -103,8 +103,7 @@ def vision_config() -> dict[str, Any]:
             )
         ),
         "url": base_url,
-        "api_key": os.getenv("DOUBAO_EMBEDDING_API_KEY", "").strip()
-        or os.getenv("ARK_API_KEY", "").strip(),
+        "api_key": os.getenv("DOUBAO_EMBEDDING_API_KEY", "").strip(),
         "semantic_limit": int(
             os.getenv(
                 "DOUBAO_VISION_SEMANTIC_LIMIT",
@@ -168,7 +167,7 @@ def _parse_vector(payload: dict[str, Any]) -> list[float]:
 def embed_text(text: str, *, timeout: int = 60) -> list[float]:
     config = vision_config()
     if not config["api_key"]:
-        raise RuntimeError("未配置 DOUBAO_EMBEDDING_API_KEY 或 ARK_API_KEY")
+        raise RuntimeError("未配置 DOUBAO_EMBEDDING_API_KEY")
     request_body = {
         "model": config["model"],
         "input": [{"type": "text", "text": text[:12000]}],

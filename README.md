@@ -7,7 +7,7 @@
 - `doubao-embedding-vision` 负责将文字和图片转换为向量。
 - Qdrant 负责相似度搜索和任务标签过滤。
 - SQLite FTS5 负责关键词、故障码和元数据检索。
-- 豆包快速模型和 DeepSeek 深度模型负责阅读召回资料、推理和组织答案。
+- 豆包 Seed 快速模型和豆包 Seed 2.1 Pro 深度模型负责阅读召回资料、推理和组织答案。
 
 大模型不直接读取向量数字。后端先从 Qdrant 找到相关资料，再把资料正文、来源和用户问题一起交给回答模型，这就是检索增强生成（RAG）。
 
@@ -86,9 +86,9 @@ SPN、FMI和P码不只依赖语义向量。`build_task_index.py` 会从资料中
 快速和深度模式共享同一检索层，区别在答案生成阶段：
 
 - 快速模式：适合日常知识查询，使用轻量回答模型。
-- 深度模式：适合复杂故障诊断，使用 DeepSeek 阅读更多证据并组织检查步骤。
+- 深度模式：适合复杂故障诊断，使用豆包 Seed 2.1 Pro 阅读更多证据并组织检查步骤。
 
-当前桌面端默认使用豆包快速模型 `doubao-seed-2-0-lite-260215`，深度模式使用 `deepseek-v4-pro-260425`。两个回答模型共用同一个方舟 API Key，但模型名称和回答策略不同。回答模型可以替换，而不必重新生成知识库向量；向量是否需要重建取决于向量模型、维度和切片内容，而不是回答模型。
+当前运行配置中，快速模式和深度模式都使用豆包 `doubao-seed-2-0-lite-260215`。两种模式复用同一个方舟 API Key，但调用策略不同：快速模式保留 12 条重排结果并向模型提供 5 条核心证据；深度模式扩大到 18 条重排结果，向模型提供最多 12 条证据、更多知识图谱关系和更长对话上下文，并通过更严格的诊断提示词输出完整检查步骤。共享 Lite 模型时两种模式均关闭内置深度思考，避免首字和完整回答等待过久。回答模型可以替换，而不必重新生成知识库向量；向量是否需要重建取决于向量模型、维度和切片内容，而不是回答模型。
 
 ## 代码结构
 
@@ -123,10 +123,15 @@ Copy-Item .\.env.example .\.env
 在 `.env` 中配置自己的服务参数（`.env` 只保存在本地，不提交到 GitHub）：
 
 ```env
-ARK_API_KEY=你的方舟API密钥
-ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+ARK_FAST_API_KEY=你的快速模型API密钥
+ARK_FAST_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
 ARK_FAST_MODEL=doubao-seed-2-0-lite-260215
-ARK_DEEP_MODEL=deepseek-v4-pro-260425
+
+ARK_DEEP_API_KEY=你的深度模型API密钥
+ARK_DEEP_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+ARK_DEEP_MODEL=doubao-seed-2-1-pro-260628
+# true 表示深度模式复用上面的快速模型配置
+ARK_DEEP_USE_FAST=true
 
 DOUBAO_EMBEDDING_API_KEY=你的向量模型密钥
 DOUBAO_EMBEDDING_URL=https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal
@@ -206,10 +211,10 @@ python .\scripts\serve_doubao_vision.py
 批量诊断功能通过以下接口工作：
 
 - `POST /api/batch/import`：导入车系和客服问题 Excel，保留原始问题并生成工程师口吻问题。
-- `POST /api/batch/diagnose`：使用工程师口吻问题检索知识库，输出一条原因对应一条维修方案。
-- `POST /api/batch/export`：将批量原因、维修方案、验证方法、来源和处理状态导出为 Excel。
+- `POST /api/batch/diagnose`：使用工程师口吻问题检索知识库，输出一条原因对应一条维修方案；模型无响应、SSL断线、超时、限流或网关错误会自动重试。
+- `POST /api/batch/export`：将批量原因、维修方案、验证方法、来源和处理状态导出为 Excel；同一问题的多条原因—维修方案连续排列，公共信息纵向合并为一个清晰的问题分组。
 
-客服记录不会被强制归并到固定类别。系统只会先去除来电记录等无关表述，将问题改写为“如何排查和处理”的工程师提问，再进行检索和回答；检索不到相关企业资料时返回“知识库无相关知识”。
+客服记录不会被强制归并到固定类别。系统只会先去除来电记录等无关表述，将问题改写为“如何排查和处理”的工程师提问，再进行检索和回答；检索不到可用于形成原因—维修方案的企业资料时，该记录按已完成处理并返回“知识库无相关知识，请补充知识库”，不会记为技术失败。
 
 微信小程序工程位于 `wechat_miniapp/`，开发者工具预览时默认连接
 `http://127.0.0.1:8009`。真机调试需在设置页填写运行后端电脑的局域网地址；正式发布时需改用 HTTPS，并在微信公众平台配置合法域名。小程序只保存后端地址，不保存任何模型密钥。

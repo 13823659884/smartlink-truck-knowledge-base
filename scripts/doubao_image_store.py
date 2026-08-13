@@ -77,14 +77,13 @@ def image_config() -> dict[str, Any]:
                 configured.get("image_qdrant_collection", "truck_knowledge_images_doubao_vision"),
             )
         ),
-        "model": os.getenv("DOUBAO_EMBEDDING_MODEL", "doubao-embedding-vision"),
+        "model": os.getenv("DOUBAO_EMBEDDING_MODEL", "doubao-embedding-vision-250615"),
         "dimensions": int(os.getenv("DOUBAO_EMBEDDING_DIMENSIONS", "2048")),
         "url": os.getenv(
             "DOUBAO_EMBEDDING_URL",
-            "https://ark.cn-beijing.volces.com/api/plan/v3/embeddings/multimodal",
+            "https://ark.cn-beijing.volces.com/api/v3/embeddings/multimodal",
         ).rstrip("/"),
-        "api_key": os.getenv("DOUBAO_EMBEDDING_API_KEY", "").strip()
-        or os.getenv("ARK_API_KEY", "").strip(),
+        "api_key": os.getenv("DOUBAO_EMBEDDING_API_KEY", "").strip(),
         "semantic_limit": int(os.getenv("DOUBAO_IMAGE_SEMANTIC_LIMIT", "12")),
     }
 
@@ -171,7 +170,7 @@ def _parse_vector(payload: dict[str, Any]) -> list[float]:
 def embed_image(path: Path, *, timeout: int = 90) -> list[float]:
     config = image_config()
     if not config["api_key"]:
-        raise RuntimeError("未配置 DOUBAO_EMBEDDING_API_KEY 或 ARK_API_KEY")
+        raise RuntimeError("未配置 DOUBAO_EMBEDDING_API_KEY")
     body = {
         "model": config["model"],
         "input": [{"type": "image_url", "image_url": {"url": _image_data_url(path)}}],

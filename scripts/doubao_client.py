@@ -12,7 +12,7 @@ from urllib.request import Request, urlopen
 
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-_ARK_QUOTA_ERROR = ""
+_ARK_QUOTA_ERRORS = {"fast": "", "deep": ""}
 
 
 def provider_details(model: str) -> tuple[str, str]:
@@ -21,6 +21,8 @@ def provider_details(model: str) -> tuple[str, str]:
         return "kimi", "Kimi（火山方舟）"
     if normalized.startswith("deepseek"):
         return "deepseek", "DeepSeek（火山方舟）"
+    if normalized.startswith("glm"):
+        return "glm", "GLM（火山方舟）"
     return "doubao", "豆包方舟"
 
 
@@ -39,27 +41,58 @@ def load_local_env() -> None:
             os.environ[key] = value
 
 
-def agent_status() -> dict[str, Any]:
+def answer_mode_config(mode: str) -> dict[str, Any]:
+    """Return isolated credentials and endpoint settings for one answer mode."""
     load_local_env()
-    model = os.getenv(
-        "ARK_DEEP_MODEL", os.getenv("ARK_MODEL", "deepseek-v4-pro-260425")
+    normalized = "fast" if mode == "fast" else "deep"
+    deep_uses_fast = normalized == "deep" and os.getenv(
+        "ARK_DEEP_USE_FAST", ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    prefix = "ARK_FAST" if normalized == "fast" or deep_uses_fast else "ARK_DEEP"
+    default_model = (
+        "doubao-seed-2-0-lite-260215"
+        if normalized == "fast" or deep_uses_fast
+        else "doubao-seed-2-1-pro-260628"
     )
-    fast_model = os.getenv(
-        "ARK_FAST_MODEL", "doubao-seed-2-0-lite-260215"
-    )
-    provider, provider_name = provider_details(model)
+    model = os.getenv(f"{prefix}_MODEL", default_model).strip()
+    api_key = os.getenv(f"{prefix}_API_KEY", "").strip()
+    base_url = os.getenv(
+        f"{prefix}_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"
+    ).rstrip("/")
+    return {
+        "mode": normalized,
+        "model": model,
+        "api_key": api_key,
+        "base_url": base_url,
+        "shared_with_fast": deep_uses_fast,
+    }
+
+
+def agent_status() -> dict[str, Any]:
+    fast = answer_mode_config("fast")
+    deep = answer_mode_config("deep")
+    provider, provider_name = provider_details(deep["model"])
     return {
         "provider": provider,
         "provider_name": provider_name,
-        "configured": bool(os.getenv("ARK_API_KEY", "").strip()),
-        "model": model,
+        "configured": bool(fast["api_key"] or deep["api_key"]),
+        "all_modes_configured": bool(fast["api_key"] and deep["api_key"]),
+        "model": deep["model"],
         "modes": {
-            "fast": {"model": fast_model, "label": "快速问答"},
-            "deep": {"model": model, "label": "深度诊断"},
+            "fast": {
+                "model": fast["model"],
+                "label": "快速问答",
+                "configured": bool(fast["api_key"]),
+                "base_url": fast["base_url"],
+            },
+            "deep": {
+                "model": deep["model"],
+                "label": "深度诊断",
+                "configured": bool(deep["api_key"]),
+                "base_url": deep["base_url"],
+            },
         },
-        "base_url": os.getenv(
-            "ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"
-        ),
+        "base_url": deep["base_url"],
     }
 
 
@@ -157,16 +190,19 @@ def parse_agent_content(content: str) -> dict[str, Any]:
         return _parse_sectioned_content(content)
 
 
-def open_json_with_retry(request: Request, timeout: int) -> dict[str, Any]:
+def open_json_with_retry(
+    request: Request, timeout: int, attempts: int = 2
+) -> dict[str, Any]:
     last_error: Exception | None = None
-    for attempt in range(2):
+    retry_count = max(1, int(attempts))
+    for attempt in range(retry_count):
         try:
             with urlopen(request, timeout=timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
         except (URLError, TimeoutError) as exc:
             last_error = exc
-            if attempt == 0:
-                time.sleep(0.8)
+            if attempt + 1 < retry_count:
+                time.sleep(min(1.0 * (2**attempt), 5.0))
                 continue
             raise
     raise RuntimeError(f"火山方舟网络调用失败：{last_error}")
@@ -214,39 +250,30 @@ def generate_grounded_answer(
     knowledge_only: bool = True,
     timeout: int = 90,
 ) -> dict[str, Any]:
-    load_local_env()
-    api_key = os.getenv("ARK_API_KEY", "").strip()
     mode = "fast" if mode == "fast" else "deep"
-    deep_model = os.getenv(
-        "ARK_DEEP_MODEL", os.getenv("ARK_MODEL", "deepseek-v4-pro-260425")
-    )
-    model = (
-        os.getenv("ARK_FAST_MODEL", "doubao-seed-2-0-lite-260215")
-        if mode == "fast"
-        else deep_model
-    ).strip()
+    mode_config = answer_mode_config(mode)
+    api_key = mode_config["api_key"]
+    model = mode_config["model"]
     provider, _ = provider_details(model)
-    base_url = os.getenv(
-        "ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"
-    ).rstrip("/")
+    base_url = mode_config["base_url"]
     if not api_key:
         return {
             "ok": False,
             "provider": provider,
             "model": model,
-            "error": "ARK_API_KEY 未配置",
+            "error": f"{mode.upper()} 模型 API Key 未配置",
         }
 
-    source_limit = 5 if mode == "fast" else 10
-    excerpt_limit = 600 if mode == "fast" else 1100
-    history_limit = 1600 if mode == "fast" else 4200
+    source_limit = 5 if mode == "fast" else 12
+    excerpt_limit = 600 if mode == "fast" else 1000
+    history_limit = 1600 if mode == "fast" else 3600
     evidence = (
         _evidence_text(
             sources,
             triples,
             source_limit=source_limit,
             excerpt_limit=excerpt_limit,
-            triple_limit=(10 if mode == "fast" else 20),
+            triple_limit=(10 if mode == "fast" else 30),
         )
         if knowledge_only
         else ""
@@ -269,8 +296,16 @@ def generate_grounded_answer(
         if knowledge_only
         else "本轮不使用企业知识库证据。"
     )
+    deep_synthesis_prompt = (
+        "深度诊断要求：综合不同文档的证据交叉判断，不要只复述排名第一的资料；"
+        "按系统或部件归纳可能原因并标明优先级，说明每项原因的检查对象、检查方法、"
+        "正常与异常判断标准、异常后的处理以及维修后的复测方法；资料存在版本或车型差异时必须明确指出。\n"
+        if mode == "deep" and knowledge_only
+        else ""
+    )
     prompt = (
-        role_prompt + "\n"
+        role_prompt + "\n" + deep_synthesis_prompt
+        +
         "严格按以下纯文本格式输出，不要输出JSON或Markdown代码块：\n"
         "【回答】\n完整答案\n"
         "【处理步骤】\n1. 步骤一\n2. 步骤二\n"
@@ -303,8 +338,16 @@ def generate_grounded_answer(
     request_body = {
         "model": model,
         "input": prompt,
-        "thinking": {"type": "disabled" if mode == "fast" else "enabled"},
-        "max_output_tokens": 1600 if mode == "fast" else 2600,
+        "thinking": {
+            "type": "disabled"
+            if mode == "fast" or mode_config["shared_with_fast"]
+            else "enabled"
+        },
+        "max_output_tokens": (
+            (1600 if knowledge_only else 700)
+            if mode == "fast"
+            else (2200 if knowledge_only else 1000)
+        ),
     }
     request = Request(
         f"{base_url}/responses",
@@ -364,38 +407,34 @@ def generate_batch_diagnosis(
     timeout: int = 120,
 ) -> dict[str, Any]:
     """Return cause-to-repair pairs for spreadsheet batch diagnosis."""
-    global _ARK_QUOTA_ERROR
-    if _ARK_QUOTA_ERROR:
-        return {"ok": False, "provider": "ark", "model": "", "error": _ARK_QUOTA_ERROR}
-    load_local_env()
-    api_key = os.getenv("ARK_API_KEY", "").strip()
     mode = "deep" if mode == "deep" else "fast"
-    deep_model = os.getenv(
-        "ARK_DEEP_MODEL", os.getenv("ARK_MODEL", "deepseek-v4-pro-260425")
-    )
-    model = (
-        os.getenv("ARK_FAST_MODEL", "doubao-seed-2-0-lite-260215")
-        if mode == "fast"
-        else deep_model
-    ).strip()
+    global _ARK_QUOTA_ERRORS
+    if _ARK_QUOTA_ERRORS[mode]:
+        return {
+            "ok": False,
+            "provider": "ark",
+            "model": "",
+            "error": _ARK_QUOTA_ERRORS[mode],
+        }
+    mode_config = answer_mode_config(mode)
+    api_key = mode_config["api_key"]
+    model = mode_config["model"]
     provider, _ = provider_details(model)
-    base_url = os.getenv(
-        "ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"
-    ).rstrip("/")
+    base_url = mode_config["base_url"]
     if not api_key:
         return {
             "ok": False,
             "provider": provider,
             "model": model,
-            "error": "ARK_API_KEY 未配置",
+            "error": f"{mode.upper()} 模型 API Key 未配置",
         }
 
     evidence = _evidence_text(
         sources,
         triples,
-        source_limit=(6 if mode == "fast" else 10),
-        excerpt_limit=(750 if mode == "fast" else 1100),
-        triple_limit=(12 if mode == "fast" else 20),
+        source_limit=(6 if mode == "fast" else 14),
+        excerpt_limit=(750 if mode == "fast" else 1200),
+        triple_limit=(12 if mode == "fast" else 32),
     )
     task_guidance = {
         "fault_code": (
@@ -442,11 +481,12 @@ def generate_batch_diagnosis(
 当前类别回答要求：{task_guidance}
 
 通用要求：
-1. 每一条cause必须有且只能有一条与之对应的repair_plan，不要把多个原因或多个方案混在同一项。
-2. repair_plan应为可执行的有序步骤，尽量包含检查/查询对象、方法、判断依据和后续处理。
-3. verification填写结果验证或信息核验方法。
-4. evidence填写所依据的资料编号，例如“资料1、资料3”。
-5. 安全关键系统需提示由合格维修人员按有效版手册操作。
+1. summary只写最关键的诊断结论，一句话且不超过50个汉字；不要复述来电时间、电话、客服处理过程或问题背景。
+2. 每一条cause必须有且只能有一条与之对应的repair_plan，不要把多个原因或多个方案混在同一项。
+3. repair_plan应为可执行的有序步骤，尽量包含检查/查询对象、方法、判断依据和后续处理。
+4. verification填写结果验证或信息核验方法。
+5. evidence填写所依据的资料编号，例如“资料1、资料3”。
+6. 安全关键系统需提示由合格维修人员按有效版手册操作。
 
 严格输出JSON，不要输出Markdown代码块或JSON以外文字：
 {{
@@ -467,8 +507,12 @@ def generate_batch_diagnosis(
     request_body = {
         "model": model,
         "input": prompt,
-        "thinking": {"type": "disabled" if mode == "fast" else "enabled"},
-        "max_output_tokens": 1800 if mode == "fast" else 2800,
+        "thinking": {
+            "type": "disabled"
+            if mode == "fast" or mode_config["shared_with_fast"]
+            else "enabled"
+        },
+        "max_output_tokens": 1800 if mode == "fast" else 2600,
     }
     request = Request(
         f"{base_url}/responses",
@@ -484,14 +528,16 @@ def generate_batch_diagnosis(
         payload: dict[str, Any] | None = None
         for attempt in range(4):
             try:
-                payload = open_json_with_retry(request, timeout)
+                # Batch jobs must survive occasional Ark no-response and
+                # connection-reset errors without marking the row as failed.
+                payload = open_json_with_retry(request, timeout, attempts=3)
                 break
             except HTTPError as exc:
                 if exc.code != 429 or attempt >= 3:
                     raise
                 friendly_error, error_code = ark_http_error_message(exc)
                 if error_code == "AccountQuotaExceeded":
-                    _ARK_QUOTA_ERROR = friendly_error
+                    _ARK_QUOTA_ERRORS[mode] = friendly_error
                     return {
                         "ok": False,
                         "provider": provider,
@@ -533,7 +579,7 @@ def generate_batch_diagnosis(
     except HTTPError as exc:
         error, error_code = ark_http_error_message(exc)
         if error_code == "AccountQuotaExceeded":
-            _ARK_QUOTA_ERROR = error
+            _ARK_QUOTA_ERRORS[mode] = error
         return {"ok": False, "provider": provider, "model": model, "error": error}
     except (URLError, TimeoutError, KeyError, ValueError, json.JSONDecodeError) as exc:
         return {
@@ -573,21 +619,12 @@ def generate_grounded_answer_stream(
     knowledge_only: bool = True,
     timeout: int = 90,
 ) -> Iterator[dict[str, Any]]:
-    load_local_env()
-    api_key = os.getenv("ARK_API_KEY", "").strip()
     mode = "fast" if mode == "fast" else "deep"
-    deep_model = os.getenv(
-        "ARK_DEEP_MODEL", os.getenv("ARK_MODEL", "deepseek-v4-pro-260425")
-    )
-    model = (
-        os.getenv("ARK_FAST_MODEL", "doubao-seed-2-0-lite-260215")
-        if mode == "fast"
-        else deep_model
-    ).strip()
+    mode_config = answer_mode_config(mode)
+    api_key = mode_config["api_key"]
+    model = mode_config["model"]
     provider, _ = provider_details(model)
-    base_url = os.getenv(
-        "ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"
-    ).rstrip("/")
+    base_url = mode_config["base_url"]
     if not api_key:
         yield {
             "type": "done",
@@ -595,20 +632,20 @@ def generate_grounded_answer_stream(
             "provider": provider,
             "model": model,
             "mode": mode,
-            "error": "ARK_API_KEY 未配置",
+            "error": f"{mode.upper()} 模型 API Key 未配置",
         }
         return
 
-    source_limit = 5 if mode == "fast" else 10
-    excerpt_limit = 600 if mode == "fast" else 1100
-    history_limit = 1600 if mode == "fast" else 4200
+    source_limit = 5 if mode == "fast" else 12
+    excerpt_limit = 600 if mode == "fast" else 1000
+    history_limit = 1600 if mode == "fast" else 3600
     evidence = (
         _evidence_text(
             sources,
             triples,
             source_limit=source_limit,
             excerpt_limit=excerpt_limit,
-            triple_limit=(10 if mode == "fast" else 20),
+            triple_limit=(10 if mode == "fast" else 30),
         )
         if knowledge_only
         else ""
@@ -631,8 +668,16 @@ def generate_grounded_answer_stream(
         if knowledge_only
         else "本轮不使用企业知识库证据。"
     )
+    deep_synthesis_prompt = (
+        "深度诊断要求：综合不同文档的证据交叉判断，不要只复述排名第一的资料；"
+        "按系统或部件归纳可能原因并标明优先级，说明每项原因的检查对象、检查方法、"
+        "正常与异常判断标准、异常后的处理以及维修后的复测方法；资料存在版本或车型差异时必须明确指出。\n"
+        if mode == "deep" and knowledge_only
+        else ""
+    )
     prompt = (
-        role_prompt + "\n"
+        role_prompt + "\n" + deep_synthesis_prompt
+        +
         "严格按以下纯文本格式输出：\n"
         "【回答】\n完整答案\n"
         "【处理步骤】\n1. 步骤一\n2. 步骤二\n"
@@ -665,8 +710,16 @@ def generate_grounded_answer_stream(
     body = {
         "model": model,
         "input": prompt,
-        "thinking": {"type": "disabled" if mode == "fast" else "enabled"},
-        "max_output_tokens": 1600 if mode == "fast" else 2600,
+        "thinking": {
+            "type": "disabled"
+            if mode == "fast" or mode_config["shared_with_fast"]
+            else "enabled"
+        },
+        "max_output_tokens": (
+            (1600 if knowledge_only else 700)
+            if mode == "fast"
+            else (2200 if knowledge_only else 1000)
+        ),
         "stream": True,
     }
     request = Request(

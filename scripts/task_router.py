@@ -139,7 +139,7 @@ def classify_batch_question(question: str, explicit: str = "") -> dict[str, Any]
             "询问车辆或应用操作方法",
         ),
         "symptom_diagnosis": (
-            ("不工作", "不灵", "异响", "故障", "异常", "无法", "失效", "不制冷", "水温高", "没电", "费电", "损坏", "漏", "时走时不走", "吃胎", "报码", "报修"),
+            ("不工作", "不灵", "异响", "故障", "异常", "不能", "无法", "失效", "不制冷", "水温高", "没电", "费电", "损坏", "漏", "时走时不走", "吃胎", "报码", "报修", "充电慢", "充电越来越慢", "电流小", "限流", "转速异常", "转速高", "转速低"),
             13,
             "描述车辆故障现象",
         ),
@@ -150,7 +150,7 @@ def classify_batch_question(question: str, explicit: str = "") -> dict[str, Any]
             add(task, weight + min(matches - 1, 3) * 3, reason)
 
     # Intent expressions help questions without explicit domain nouns.
-    if any(marker in text for marker in ("原因", "怎么修", "怎么排查", "维修方法", "处理方法")):
+    if any(marker in text for marker in ("原因", "怎么修", "怎么排查", "如何排查", "如何处理", "维修方法", "处理方法")):
         add("symptom_diagnosis", 8, "询问原因或维修排查")
     if any(marker in text for marker in ("周期", "期限", "几个月", "多少公里")):
         if scores["warranty"]:
@@ -185,14 +185,123 @@ def rewrite_engineer_question(question: str) -> dict[str, str]:
     """
     original = re.sub(r"\s+", " ", str(question or "")).strip()
     text = original
-    # Remove call-log metadata, phone numbers, and trailing ticket IDs.
-    text = re.sub(r"20\d{2}年?\s*\d{1,2}月?\s*\d{1,2}日?[^：:，,]{0,20}[：:]", "", text)
-    text = re.sub(r"(?:1\d{10}|0\d{2,3}[- ]?\d{7,8})", "", text)
-    text = re.sub(r"(?:[，,。；; ]*)(?:编号|工单|单号|记录)?\s*\d{3,8}\s*$", "", text)
-    text = re.sub(r"^(?:用户|客户|车主|司机)?(?:来电|来访|反馈|反映|报修|咨询|询问)\s*[：:，,]?\s*", "", text)
-    text = re.sub(r"^(?:请问|想问|想咨询|咨询一下|问一下)\s*", "", text)
-    text = re.sub(r"(?:，|,)?\s*(?:请问|想问|想咨询|咨询|询问)(?:一下)?\s*", "，", text)
+
+    # Remove the call timestamp/caller header, contact details, agent number and
+    # other metadata before identifying the issue. Vehicle fault codes and VINs
+    # are intentionally preserved because they are useful retrieval keys.
+    text = re.sub(
+        r"^\s*20\d{2}年\s*\d{1,2}月\s*\d{1,2}日\s*\d{1,2}[：:]\d{1,2}[：:]\d{1,2}\s*",
+        "",
+        text,
+    )
+    text = re.sub(
+        r"^(?:用户|客户|车主|司机|服务站)?(?:来电|来访|反馈|反映|报修)\s*(?:1[3-9]\d{9})?\s*[：:；;，,]?\s*",
+        "",
+        text,
+    )
+    text = re.sub(r"1[3-9]\d{9}|0\d{2,3}[- ]?\d{7,8}", "", text)
+    text = re.sub(r"[\u4e00-\u9fff]{1,4}(?:先生|女士|师傅)\s*[，,：:]?", "", text)
+    text = re.sub(r"(?<![A-Z0-9])[\u4e00-\u9fff][A-Z][A-Z0-9]{5,7}(?![A-Z0-9])", "", text, flags=re.I)
+    text = re.sub(
+        r"(?:[，,。；; ]*)(?:客服|坐席|员工)?(?:编号|工号|工单|单号|记录)?\s*\d{4}\s*$",
+        "",
+        text,
+    )
+
+    # Everything after these expressions is normally handling history rather
+    # than the customer's technical question. Keeping only the prefix avoids
+    # sending call duration, callbacks, contact attempts and already-given
+    # customer-service answers into retrieval and the answer model.
+    handling_markers = (
+        "客服告知", "已告知", "告知用户", "告知", "客服提供", "客服短信",
+        "客服", "提供电话", "提供联系方式", "提供", "告诉", "建议联系",
+        "建议用户", "引导联系", "指导联系", "引导在线",
+        "表示帮其联系", "帮其联系", "安排救援", "客服转接", "回拨",
+        "通话中", "用户知晓", "客户知晓", "用户表示知道", "用户表示自行",
+        "用户说自行", "用户咨询", "用户在", "用户挂", "用户说", "用户已",
+        "自己已联系", "无需联系", "无需安排", "无需对接", "自行联系服务站",
+        "自行进站", "已经联系服务站", "已联系服务站", "查询中", "具体以",
+        "可以联系", "服务站说", "挂机", "挂断",
+    )
+    marker_positions = [text.find(marker) for marker in handling_markers if text.find(marker) > 0]
+    if marker_positions:
+        text = text[: min(marker_positions)]
+
+    # Remove remaining dialogue/reporting language without deleting the actual
+    # symptom or requested subject.
+    text = re.sub(r"^(?:用户|客户|车主|司机)?(?:表示|称|说|反映|反馈|报修)\s*[：:，,]?\s*", "", text)
+    text = re.sub(r"^(?:请问|想问|想咨询|咨询一下|问一下|询问)\s*", "", text)
+    text = re.sub(r"(?:，|,)?\s*(?:请问|想问|想咨询|咨询|询问)(?:一下)?(?:原因|是否正常|是不是正常)?\s*", "，", text)
+    text = re.sub(r"(?:，|,)?\s*(?:用户|客户)(?:表示|称|说).*$", "", text)
     text = re.sub(r"[。；;]+$", "", text).strip(" ，,：:")
+
+    # Long records can still contain several clauses. Keep only clauses that
+    # carry a fault, component, code or an actual request, with a short maximum
+    # length so the displayed summary remains the core question.
+    clauses = [item.strip(" ，,。；;：:") for item in re.split(r"[。；;]", text) if item.strip(" ，,。；;：:")]
+    noise_markers = (
+        "服务站说", "服务站回复", "客服", "用户无需", "用户已", "用户在",
+        "马上到", "报备一下", "有问题再联系", "具体以服务站", "查询不到",
+    )
+    clauses = [item for item in clauses if not any(marker in item for marker in noise_markers)]
+    if clauses:
+        text = clauses[0]
+
+    # A technical fault followed by a request for a nearby station is still a
+    # fault-diagnosis question. Remove that service tail so retrieval focuses on
+    # the failure itself rather than contact-book information.
+    technical_markers = (
+        "故障", "异常", "不能", "无法", "不工作", "不灵", "异响", "高温",
+        "水温", "气压", "转速", "限扭", "动力不足", "费电", "耗电", "充电慢",
+        "充不上电", "充电限流", "没有空调", "不制冷", "损坏", "乌龟灯", "吃胎",
+    )
+    explicit_policy_request = any(
+        marker in text
+        for marker in ("保用", "保修", "质保", "索赔", "三包", "保养", "更换周期")
+    )
+    if any(marker in text for marker in technical_markers) and not explicit_policy_request:
+        text = re.sub(
+            r"[，,]\s*(?:去[^，,。]{0,8})?(?:咨询|询问|找)?(?:就近|附近|[^，,。]{1,10})?(?:服务站|维修站).*$",
+            "",
+            text,
+        )
+        parts = [item.strip() for item in re.split(r"[，,]", text) if item.strip()]
+        selected_parts: list[str] = []
+        for item in parts:
+            if any(marker in item for marker in technical_markers):
+                selected_parts.append(item)
+            elif selected_parts and (
+                re.search(r"\d", item)
+                or any(marker in item for marker in ("能行驶", "可以行驶", "不能行驶", "成空挡"))
+            ):
+                selected_parts.append(item)
+        if selected_parts:
+            text = "，".join(selected_parts)
+
+    # For administrative questions, discard opening call-quality chatter and
+    # retain the actual requested item.
+    if "补贴" in text and "补贴" not in text[:8]:
+        start = text.find("停运补贴")
+        text = text[start if start >= 0 else text.find("补贴") :]
+
+    # Warranty records often include the answer immediately after the subject
+    # without an “告知” verb. Stop after the requested warranty period.
+    warranty_match = re.search(r"(.{1,40}?(?:保用|保修|质保)(?:时间|周期|期限)?)", text)
+    if warranty_match:
+        text = warranty_match.group(1)
+    if len(text) > 60:
+        comma_parts = [item.strip() for item in re.split(r"[，,]", text) if item.strip()]
+        important_markers = (
+            "故障", "异常", "不能", "无法", "不工作", "不灵", "异响", "高温",
+            "水温", "气压", "限扭", "动力不足", "费电", "耗电", "充电", "保用",
+            "保修", "质保", "保养", "周期", "服务站", "电话", "说明书", "解绑",
+            "绑定", "spn", "fmi",
+        )
+        selected = [
+            item for item in comma_parts
+            if any(marker in item.lower() for marker in important_markers)
+        ][:4]
+        text = "，".join(selected or comma_parts[:3])[:60].rstrip("，,")
     if not text:
         text = original
 
@@ -215,13 +324,24 @@ def rewrite_engineer_question(question: str) -> dict[str, str]:
     text = text.replace("打气泵不工作", "打气泵不工作")
     text = text.replace("PTC不工作", "PTC不工作")
     text = text.replace("取力器不工作", "取力器不工作")
+    text = text.replace("充电没有空调吗", "充电过程中空调无法使用")
+    if "被别人绑定" in text or "其他人绑定" in text:
+        text = "解放行提示车辆被他人绑定"
+    text = text.replace("车辆车辆", "车辆")
+
+    text = re.sub(r"^咨询", "", text).strip(" ，,")
+    text = re.sub(r"^报(?=(?:动力|电池|发动机|变速箱|车辆|系统).*(?:故障|异常))", "", text)
+    text = re.sub(r"，(?:原因|是否正常|是不是正常)$", "", text)
+    text = re.sub(r"(?:怎么处理|如何处理|怎么排查|如何排查|怎么办)[？?]?$", "", text)
 
     if any(mark in text for mark in ("保用", "保修", "质保", "索赔", "三包")):
         suffix = "如何判定适用条件并办理？"
-    elif any(mark in text for mark in ("服务站", "维修站", "电话", "收费", "预约", "进站")):
-        suffix = "应如何处理或安排进站？"
-    elif any(mark in text for mark in ("怎么处理", "如何处理", "怎么排查", "如何排查", "怎么办")):
-        suffix = ""
+    elif any(mark in text for mark in ("保养", "多久换", "更换周期", "换一次油")):
+        suffix = "应按什么周期和要求进行？"
+    elif any(mark in text for mark in ("服务站", "维修站", "电话", "收费", "预约", "进站", "补贴", "代理商")):
+        suffix = "应如何查询或办理？"
+    elif any(mark in text for mark in ("说明书", "解放行", "app", "APP", "绑定", "解绑", "品牌", "型号", "后台")):
+        suffix = "应如何操作或处理？"
     else:
         suffix = "如何排查和处理？"
     rewritten = text.rstrip("？?。；;，,")

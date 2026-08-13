@@ -244,14 +244,38 @@ function addStreamingMessage() {
 }
 
 function createStreamRenderer(live) {
-  let received = ""; let shown = ""; let stopped = false;
-  const paint = () => { live.content.textContent = shown; $("conversation").scrollTop = $("conversation").scrollHeight; };
-  const timer = setInterval(() => { if (stopped || shown.length >= received.length) return; const pending = received.length - shown.length; shown = received.slice(0, shown.length + Math.min(12, Math.max(3, Math.ceil(pending / 4)))); paint(); }, 32);
+  let received = ""; let stopped = false; let frame = 0;
+  const paint = () => {
+    frame = 0;
+    if (stopped) return;
+    live.content.textContent = received;
+    $("conversation").scrollTop = $("conversation").scrollHeight;
+  };
+  const schedulePaint = () => {
+    if (!frame) frame = requestAnimationFrame(paint);
+  };
   return {
-    status(text) { if (!received) { shown = text; paint(); shown = ""; } },
-    push(text) { if (text) received += text; },
-    async finish() { clearInterval(timer); shown = received; paint(); stopped = true; },
-    stop() { stopped = true; clearInterval(timer); },
+    status(text) {
+      if (!received) {
+        live.content.textContent = text;
+        $("conversation").scrollTop = $("conversation").scrollHeight;
+      }
+    },
+    push(text) {
+      if (!text || stopped) return;
+      received += text;
+      schedulePaint();
+    },
+    async finish() {
+      if (frame) cancelAnimationFrame(frame);
+      live.content.textContent = received;
+      $("conversation").scrollTop = $("conversation").scrollHeight;
+      stopped = true;
+    },
+    stop() {
+      stopped = true;
+      if (frame) cancelAnimationFrame(frame);
+    },
   };
 }
 
@@ -335,7 +359,7 @@ function fileToBase64(file) {
 }
 
 function updateBatchSummary(statusText = "") {
-  const completed = batchState.rows.filter((row) => ["success", "failed"].includes(row.status)).length;
+  const completed = batchState.rows.filter((row) => ["success", "no_knowledge", "failed"].includes(row.status)).length;
   const failed = batchState.rows.filter((row) => row.status === "failed").length;
   const percent = batchState.rows.length ? Math.round(completed / batchState.rows.length * 100) : 0;
   $("batchTotal").textContent = batchState.rows.length;
@@ -351,12 +375,12 @@ function updateBatchSummary(statusText = "") {
 }
 
 function batchStatusLabel(status) {
-  return { pending: "待处理", running: "生成中", success: "已完成", failed: "失败", stopped: "已停止" }[status] || "待处理";
+  return { pending: "待处理", running: "生成中", success: "已完成", no_knowledge: "待补充知识", failed: "失败", stopped: "已停止" }[status] || "待处理";
 }
 
 function renderBatchRows() {
   if (!batchState.rows.length) {
-    $("batchTableBody").innerHTML = '<tr class="batch-empty-row"><td colspan="7">请选择包含“故障现象”或“客户询问问题”列的Excel文件</td></tr>';
+    $("batchTableBody").innerHTML = '<tr class="batch-empty-row"><td colspan="8">请选择包含“故障现象”或“客户询问问题”列的Excel文件</td></tr>';
     return;
   }
   $("batchTableBody").innerHTML = batchState.rows.map((row, index) => {
@@ -446,18 +470,44 @@ function appendBatchExportRows(row, data) {
     references: referenceText(data?.references),
     model: data?.agent?.model || "",
   };
-  if (row.status === "success") {
+  if (["success", "no_knowledge"].includes(row.status)) {
     (data.pairs || []).forEach((pair) => batchState.exportRows.push({
       ...base,
       cause: pair.cause || "",
       repair_plan: pair.repair_plan || "",
       verification: pair.verification || "",
-      status: "成功",
+      status: row.status === "no_knowledge" ? "成功（待补充知识库）" : "成功",
       error: "",
     }));
   } else {
     batchState.exportRows.push({ ...base, cause: "", repair_plan: "", verification: "", status: "失败", error: row.error || "未知错误" });
   }
+}
+
+async function requestBatchDiagnosis(payload) {
+  let lastError = new Error("批量诊断请求未完成");
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch("/api/batch/diagnose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (response.ok) return data;
+      const error = new Error(data.error || `批量诊断请求失败（${response.status}）`);
+      error.status = response.status;
+      throw error;
+    } catch (error) {
+      lastError = error;
+      const text = String(error?.message || "").toLowerCase();
+      const retryable = !error?.status || [429, 502, 503, 504].includes(error.status)
+        || /timeout|timed out|network|failed to fetch|ssl|connection|频率|限流|无响应/.test(text);
+      if (!retryable || attempt === 3) throw error;
+      await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+    }
+  }
+  throw lastError;
 }
 
 async function startBatchDiagnosis() {
@@ -476,18 +526,14 @@ async function startBatchDiagnosis() {
     renderBatchRows();
     updateBatchSummary(`正在处理第 ${index + 1}/${batchState.rows.length} 条：${row.symptom.slice(0, 28)}`);
     try {
-      const data = await getJson("/api/batch/diagnose", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          vehicle_series: row.vehicle_series,
-          symptom: row.original_question || row.symptom,
-          engineer_question: row.engineer_question || row.symptom,
-          task_type: row.task_type,
-          answer_mode: batchState.mode,
-        }),
+      const data = await requestBatchDiagnosis({
+        vehicle_series: row.vehicle_series,
+        symptom: row.original_question || row.symptom,
+        engineer_question: row.engineer_question || row.symptom,
+        task_type: row.task_type,
+        answer_mode: batchState.mode,
       });
-      row.status = "success";
+      row.status = data.no_knowledge ? "no_knowledge" : "success";
       batchState.answers.set(row.id, data);
       appendBatchExportRows(row, data);
     } catch (error) {

@@ -274,9 +274,17 @@ def cached_retrieval(
     energy_type: str,
     context: str,
     task_type_override: str = "",
+    answer_mode: str = "fast",
 ) -> tuple[dict[str, object], bool]:
     if RETRIEVAL_BACKEND not in {"sqlite_hybrid", "qdrant_hybrid"}:
         raise RuntimeError(f"尚未配置检索后端：{RETRIEVAL_BACKEND}")
+    normalized_mode = "deep" if answer_mode == "deep" else "fast"
+    top_k = 18 if normalized_mode == "deep" else 12
+    # Both modes still search the same full knowledge base. Deep mode keeps
+    # more of the already reranked results instead of increasing the costly
+    # Qdrant candidate scan, so answer depth improves without another latency hit.
+    candidate_limit = CANDIDATE_LIMIT
+    semantic_limit = SEMANTIC_LIMIT
     key: tuple[object, ...] = (
         index_generation(),
         question,
@@ -285,8 +293,10 @@ def cached_retrieval(
         energy_type,
         context,
         task_type_override,
-        CANDIDATE_LIMIT,
-        SEMANTIC_LIMIT,
+        normalized_mode,
+        top_k,
+        candidate_limit,
+        semantic_limit,
         RRF_K,
     )
     now = time.monotonic()
@@ -304,10 +314,10 @@ def cached_retrieval(
         vehicle_series=vehicle_series,
         scene=scene,
         energy_type=energy_type,
-        top_k=12,
+        top_k=top_k,
         context=context,
-        candidate_limit=CANDIDATE_LIMIT,
-        semantic_limit=(SEMANTIC_LIMIT if RETRIEVAL_BACKEND == "qdrant_hybrid" else 0),
+        candidate_limit=candidate_limit,
+        semantic_limit=(semantic_limit if RETRIEVAL_BACKEND == "qdrant_hybrid" else 0),
         rrf_k=RRF_K,
         task_type_override=task_type_override,
     )
@@ -536,6 +546,69 @@ def batch_fallback_pairs(
         if len(pairs) >= limit:
             break
     return pairs
+
+
+def batch_no_knowledge_result(model: str = "") -> dict[str, object]:
+    """Return a completed row when retrieval has no usable repair evidence."""
+    message = "知识库无相关知识，请补充知识库"
+    return {
+        "ok": True,
+        "no_knowledge": True,
+        "fallback": False,
+        "provider": "knowledge_base",
+        "model": model,
+        "summary": message,
+        "pairs": [
+            {
+                "cause": message,
+                "repair_plan": message,
+                "verification": "",
+                "evidence": "",
+            }
+        ],
+        "safety_notice": "",
+    }
+
+
+def transient_batch_error(error: object) -> bool:
+    """Whether a failed batch call represents a retryable provider problem."""
+    text = str(error or "").lower()
+    markers = (
+        "timeout",
+        "timed out",
+        "urlerror",
+        "ssl",
+        "connection reset",
+        "connection aborted",
+        "remote end closed",
+        "429",
+        "502",
+        "503",
+        "504",
+        "频率",
+        "限流",
+        "请求未完成",
+        "网络调用失败",
+    )
+    return any(marker in text for marker in markers)
+
+
+def provider_configuration_error(error: object) -> bool:
+    """Whether an error must remain a technical failure rather than no-knowledge."""
+    text = str(error or "").lower()
+    markers = (
+        "api key",
+        "未配置",
+        "无效或已失效",
+        "欠费",
+        "额度已用完",
+        "accountquotaexceeded",
+        "accountoverdue",
+        "http 400",
+        "http 401",
+        "http 403",
+    )
+    return any(marker in text for marker in markers)
 
 
 class KnowledgeHandler(BaseHTTPRequestHandler):
@@ -1061,8 +1134,10 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
                 explicit_category = ""
                 if category_index is not None and category_index < len(values):
                     explicit_category = str(values[category_index] or "").strip()
-                classification = classify_batch_question(symptom, explicit_category)
                 rewritten = rewrite_engineer_question(symptom)
+                classification = classify_batch_question(
+                    rewritten["engineer_question"], explicit_category
+                )
                 imported.append(
                     {
                         "id": uuid.uuid4().hex,
@@ -1115,35 +1190,41 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
             "",
             "",
             task_type,
+            answer_mode,
         )
-        agent_result = generate_batch_diagnosis(
-            symptom=engineer_question,
-            sources=result.get("sources", []),
-            triples=result.get("triples", []),
-            vehicle_series=vehicle_series,
-            task_type=task_type,
-            task_label=task_label,
-            mode=answer_mode,
-        )
+        sources = list(result.get("sources", []))
+        if not sources:
+            agent_result = batch_no_knowledge_result()
+        else:
+            agent_result = generate_batch_diagnosis(
+                symptom=engineer_question,
+                sources=sources,
+                triples=result.get("triples", []),
+                vehicle_series=vehicle_series,
+                task_type=task_type,
+                task_label=task_label,
+                mode=answer_mode,
+                timeout=75,
+            )
         if not agent_result.get("ok"):
-            fallback_pairs = batch_fallback_pairs(result.get("sources", []))
+            fallback_pairs = batch_fallback_pairs(sources)
             if not fallback_pairs:
-                self.send_json(
-                    {"error": agent_result.get("error", "批量诊断失败")},
-                    HTTPStatus.BAD_GATEWAY,
+                error = agent_result.get("error", "批量诊断失败")
+                if transient_batch_error(error) or provider_configuration_error(error):
+                    self.send_json({"error": error}, HTTPStatus.BAD_GATEWAY)
+                    return
+                agent_result = batch_no_knowledge_result(
+                    str(agent_result.get("model", ""))
                 )
-                return
-            agent_result = {
-                **agent_result,
-                "ok": True,
-                "fallback": True,
-                "summary": (
-                    "模型接口当前不可用，以下为知识库检索资料的临时整理结果；"
-                    "请由维修人员结合有效版手册复核。"
-                ),
-                "pairs": fallback_pairs,
-                "safety_notice": "安全关键系统请由合格维修人员按有效版维修手册操作。",
-            }
+            else:
+                agent_result = {
+                    **agent_result,
+                    "ok": True,
+                    "fallback": True,
+                    "summary": "模型暂时无响应，已根据知识库中的明确原因和维修方案完成整理。",
+                    "pairs": fallback_pairs,
+                    "safety_notice": "安全关键系统请由合格维修人员按有效版维修手册操作。",
+                }
         enrich_sources(result, include_images=False)
         references = []
         for index, source in enumerate(result.get("sources", [])[:10], start=1):
@@ -1165,6 +1246,7 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
                 "summary": agent_result.get("summary", ""),
                 "pairs": agent_result.get("pairs", []),
                 "safety_notice": agent_result.get("safety_notice", ""),
+                "no_knowledge": bool(agent_result.get("no_knowledge", False)),
                 "references": references,
                 "agent": {
                     key: value for key, value in agent_result.items()
@@ -1198,29 +1280,46 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
             "处理状态", "错误信息", "回答模型",
         ]
         worksheet.append(headers)
-        for index, row in enumerate(rows, start=1):
+        # Group every cause-repair pair from the same imported question into
+        # one contiguous visual block. The first-seen question order is kept.
+        grouped_rows: dict[tuple[object, ...], list[dict[str, object]]] = {}
+        for row in rows:
             if not isinstance(row, dict):
                 continue
-            worksheet.append(
-                [
-                    index,
-                    str(row.get("sheet", "")),
-                    row.get("source_row", ""),
-                    str(row.get("vehicle_series", "")),
-                    str(row.get("task_label", "")),
-                    str(row.get("original_question", row.get("symptom", ""))),
-                    str(row.get("engineer_question", "")),
-                    str(row.get("cause", "")),
-                    str(row.get("repair_plan", "")),
-                    str(row.get("verification", "")),
-                    str(row.get("summary", "")),
-                    str(row.get("safety_notice", "")),
-                    str(row.get("references", "")),
-                    str(row.get("status", "")),
-                    str(row.get("error", "")),
-                    str(row.get("model", "")),
-                ]
+            group_key = (
+                str(row.get("sheet", "")),
+                str(row.get("source_row", "")),
+                str(row.get("vehicle_series", "")),
+                str(row.get("original_question", row.get("symptom", ""))),
+                str(row.get("engineer_question", "")),
             )
+            grouped_rows.setdefault(group_key, []).append(row)
+
+        question_ranges: list[tuple[int, int, int]] = []
+        for question_index, question_rows in enumerate(grouped_rows.values(), start=1):
+            start_row = worksheet.max_row + 1
+            for row in question_rows:
+                worksheet.append(
+                    [
+                        question_index,
+                        str(row.get("sheet", "")),
+                        row.get("source_row", ""),
+                        str(row.get("vehicle_series", "")),
+                        str(row.get("task_label", "")),
+                        str(row.get("original_question", row.get("symptom", ""))),
+                        str(row.get("engineer_question", "")),
+                        str(row.get("cause", "")),
+                        str(row.get("repair_plan", "")),
+                        str(row.get("verification", "")),
+                        str(row.get("summary", "")),
+                        str(row.get("safety_notice", "")),
+                        str(row.get("references", "")),
+                        str(row.get("status", "")),
+                        str(row.get("error", "")),
+                        str(row.get("model", "")),
+                    ]
+                )
+            question_ranges.append((start_row, worksheet.max_row, question_index))
         header_fill = PatternFill("solid", fgColor="0B5FA5")
         header_font = Font(color="FFFFFF", bold=True)
         thin = Side(style="thin", color="D9E2EC")
@@ -1236,6 +1335,36 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
             for cell in row:
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
                 cell.border = Border(bottom=thin)
+        common_columns = (1, 2, 3, 4, 5, 6, 7, 11, 12, 13, 14, 15, 16)
+        group_line = Side(style="medium", color="9FB3C8")
+        group_fills = (
+            PatternFill("solid", fgColor="F7FAFC"),
+            PatternFill("solid", fgColor="EEF6FC"),
+        )
+        for start_row, end_row, question_index in question_ranges:
+            group_fill = group_fills[(question_index - 1) % len(group_fills)]
+            for row_number in range(start_row, end_row + 1):
+                for column_number in range(1, len(headers) + 1):
+                    cell = worksheet.cell(row=row_number, column=column_number)
+                    cell.fill = group_fill
+                    cell.border = Border(
+                        top=group_line if row_number == start_row else thin,
+                        bottom=thin,
+                    )
+            if end_row > start_row:
+                for column_number in common_columns:
+                    worksheet.merge_cells(
+                        start_row=start_row,
+                        start_column=column_number,
+                        end_row=end_row,
+                        end_column=column_number,
+                    )
+            for column_number in common_columns:
+                worksheet.cell(start_row, column_number).alignment = Alignment(
+                    vertical="center",
+                    horizontal="center" if column_number in (1, 3, 4, 5, 14) else "left",
+                    wrap_text=True,
+                )
         worksheet.freeze_panes = "A2"
         worksheet.auto_filter.ref = worksheet.dimensions
         worksheet.row_dimensions[1].height = 28
@@ -1360,6 +1489,9 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
             (time.perf_counter() - persistence_started) * 1000, 2
         )
 
+        answer_mode = (
+            "fast" if str(payload.get("answer_mode", "fast")) == "fast" else "deep"
+        )
         retrieval_started = time.perf_counter()
         if scope == "professional":
             result, cache_hit = cached_retrieval(
@@ -1369,6 +1501,7 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
                 energy_type,
                 context,
                 task_type_for_payload(payload),
+                answer_mode,
             )
         else:
             result, cache_hit = (
@@ -1382,9 +1515,6 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
         result["retrieval"]["backend"] = RETRIEVAL_BACKEND
         result["retrieval"]["scope"] = scope
         use_agent = force_agent or bool(payload.get("use_agent", False)) or scope == "general"
-        answer_mode = (
-            "fast" if str(payload.get("answer_mode", "fast")) == "fast" else "deep"
-        )
         agent_started = time.perf_counter()
         if use_agent:
             agent_result = generate_grounded_answer(
@@ -1666,6 +1796,7 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
                     energy_type,
                     context,
                     task_type_for_payload(payload),
+                    answer_mode,
                 )
             else:
                 result, cache_hit = (
@@ -1712,7 +1843,7 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
             mode_attempts = (
                 [("fast", 1), ("fast", 2), ("deep", 1)]
                 if answer_mode == "fast"
-                else [("deep", 1), ("fast", 1), ("fast", 2)]
+                else [("deep", 1), ("deep", 2)]
             )
             for attempt_index, (active_mode, attempt) in enumerate(mode_attempts):
                 raw_content = ""
@@ -1728,7 +1859,11 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
                     scene=scene,
                     mode=active_mode,
                     knowledge_only=scope == "professional",
-                    timeout=25 if active_mode == "deep" else 8,
+                    # Ark may pause for more than 12 seconds between streaming
+                    # chunks even when the model and key are healthy. A longer
+                    # read timeout prevents transient provider latency from being
+                    # reported to users as "agent unavailable".
+                    timeout=90,
                 ):
                     if event.get("type") == "delta":
                         raw_content += str(event.get("text", ""))
@@ -1954,7 +2089,7 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
                 }
             )
             self.send_stream_event({"type": "done", "data": result})
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             return
         except Exception as exc:
             try:
@@ -1964,12 +2099,12 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
                         "error": f"{type(exc).__name__}: {exc}",
                     }
                 )
-            except (BrokenPipeError, ConnectionResetError):
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 return
         finally:
             try:
                 self.finish_stream()
-            except (BrokenPipeError, ConnectionResetError):
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 pass
 
     def handle_image_recognition(self, payload: dict[str, object]) -> None:

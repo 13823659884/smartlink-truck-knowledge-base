@@ -9,15 +9,16 @@
 配置模板为 `.env.example`，实际运行时复制为本地 `.env` 并填写自己的 API Key。当前版本使用：
 
 - 快速回答：`doubao-seed-2-0-lite-260215`
-- 深度回答：`deepseek-v4-pro-260425`
+- 深度回答：复用快速模型 `doubao-seed-2-0-lite-260215`，但启用深度诊断策略
 - 多模态向量：`doubao-embedding-vision-250615`
 - 方舟地址：`https://ark.cn-beijing.volces.com/api/v3`
+- 向量套餐接口：`https://ark.cn-beijing.volces.com/api/plan/v3/embeddings/multimodal`
 - 向量维度：2048
 - 向量集合：`truck_knowledge_chunks_doubao_vision`
 - PDF 页面集合：`truck_knowledge_pdf_pages_doubao_vision`
 - 图片集合：`truck_knowledge_images_doubao_vision`
 
-快速和深度回答可以共用一个方舟 API Key；向量接口也可以使用独立 Key。密钥不写入前端、配置模板或 GitHub。
+当前通过 `ARK_DEEP_USE_FAST=true` 让快速回答和深度诊断复用 `ARK_FAST_API_KEY`；向量接口仍独立使用 `DOUBAO_EMBEDDING_API_KEY`。密钥不写入前端、配置模板或 GitHub。
 
 ## 桌面端能力
 
