@@ -620,11 +620,16 @@ function renderImportDocResult(report) {
   body.innerHTML = "";
   const row = document.createElement("tr");
   const task = report.task || {};
+  const vectorizedText = report.vector_failed
+    ? `${report.vectorized}/${report.chunks}（失败${report.vector_failed}）`
+    : report.vector_skipped
+      ? `${report.vectorized}（跳过${report.vector_skipped}）`
+      : String(report.vectorized ?? 0);
   const cells = [
     `${escDoc(report.file_name)}${report.superseded ? `（停用旧版本 ${report.superseded} 份）` : ""}`,
     escDoc(report.scene),
     String(report.chunks ?? 0),
-    report.vector_failed ? `${report.vectorized}/${report.chunks}（失败${report.vector_failed}）` : String(report.vectorized ?? 0),
+    vectorizedText,
     escDoc(task.task_label || "—"),
     report.ok ? "已导入" : "失败",
   ];

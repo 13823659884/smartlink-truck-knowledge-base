@@ -259,6 +259,14 @@ def import_document(
     finally:
         connection.close()
 
+    steps.append("任务分类")
+    task_stats = _index_task_categories(
+        document_chunks,
+        relative_path.as_posix(),
+        document_id,
+    )
+    chunk_tasks = task_stats.pop("chunk_tasks", {})
+
     steps.append("向量化")
     client = doubao_vision_store._client()
     vector_config = doubao_vision_store.vision_config()
@@ -279,11 +287,17 @@ def import_document(
 
     indexed = 0
     failed = 0
+    skipped = 0
     errors: list[dict[str, str]] = []
     for start in range(0, len(document_chunks), 16):
         batch = document_chunks[start : start + 16]
         points: list[Any] = []
         for chunk in batch:
+            # 与离线构建 doubao_vision_store.build_index 一致：故障码和图纸类
+            # 切片走精确匹配/视觉向量，不写入文字语义向量库。
+            if chunk_tasks.get(str(chunk["id"]), "") in {"fault_code", "drawing"}:
+                skipped += 1
+                continue
             try:
                 vector = doubao_vision_store.embed_text(
                     str(chunk["content"])
@@ -318,16 +332,9 @@ def import_document(
         if points:
             client.upsert(collection_name=collection, points=points, wait=True)
             indexed += len(points)
-    if failed and indexed == 0:
+    if failed and indexed == 0 and not skipped:
         target_path.unlink(missing_ok=True)
         raise DocumentImportError("全部切片向量化失败，请检查豆包向量接口配置")
-
-    steps.append("任务分类")
-    task_stats = _index_task_categories(
-        document_chunks,
-        relative_path.as_posix(),
-        document_id,
-    )
 
     elapsed = round(time.perf_counter() - started, 2)
     return {
@@ -341,6 +348,7 @@ def import_document(
         "chunks": len(document_chunks),
         "vectorized": indexed,
         "vector_failed": failed,
+        "vector_skipped": skipped,
         "ocr_used": ocr_used,
         "ocr_pages": ocr_pages,
         "status": status,
@@ -425,17 +433,23 @@ def _index_task_categories(
     relative_path: str,
     document_id: str,
 ) -> dict[str, Any]:
-    """把新切片的任务分类写入 task_index.db（增量，不影响已有记录）。"""
+    """把新切片的任务分类写入 task_index.db（增量，不影响已有记录）。
+
+    返回统计信息，其中 chunk_tasks 为「切片ID → 主任务类型」映射，
+    供向量化阶段按离线构建规则过滤 fault_code / drawing 类切片。
+    """
     task_connection = sqlite3.connect(TASK_DATABASE_PATH)
     try:
         build_task_index.create_schema(task_connection)
         votes: Counter[str] = Counter()
         fault_count = 0
+        chunk_tasks: dict[str, str] = {}
         for chunk in document_chunks:
             primary, secondary, confidence, reasons = build_task_index.classify(
                 relative_path, str(chunk["content"])
             )
             votes[primary] += 1
+            chunk_tasks[str(chunk["id"])] = primary
             task_connection.execute(
                 """
                 INSERT OR REPLACE INTO chunk_categories
@@ -514,6 +528,7 @@ def _index_task_categories(
             ),
             "chunks": len(document_chunks),
             "fault_code_entries": fault_count,
+            "chunk_tasks": chunk_tasks,
         }
     finally:
         task_connection.close()
