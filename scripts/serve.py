@@ -104,17 +104,23 @@ VALID_TASK_TYPES = {
     "vin", "fault_code", "symptom_diagnosis", "usage", "maintenance",
     "warranty", "service_technical", "drawing", "claim_case", "general",
 }
+PROFESSIONAL_TASK_TYPES = VALID_TASK_TYPES - {"general"}
 PROFESSIONAL_MARKERS = (
     "车辆", "卡车", "轻卡", "重卡", "货车", "解放", "发动机", "变速箱", "离合器",
     "制动", "刹车", "故障码", "故障灯", "维修", "检修", "保养", "保用", "索赔",
     "轮胎", "底盘", "电池", "高压", "充电", "再生", "机油", "冷却液", "尿素",
     "vin", "spn", "fmi", "故障", "空压机", "驾驶室", "车桥", "仪表",
+    "转向", "方向盘", "助力", "转向泵",
 )
 
 
-def question_scope(question: str, intent: str, scene: str) -> str:
+def question_scope(
+    question: str, intent: str, scene: str, task_type: str = ""
+) -> str:
     """Route vehicle-domain questions to KB-only mode and other questions to general mode."""
     normalized = str(question or "").strip().lower()
+    if task_type in PROFESSIONAL_TASK_TYPES:
+        return "professional"
     if intent in PROFESSIONAL_INTENTS or scene in {"用", "养", "修", "保"}:
         return "professional"
     if any(marker.lower() in normalized for marker in PROFESSIONAL_MARKERS):
@@ -129,6 +135,19 @@ def task_type_for_payload(payload: dict[str, object]) -> str:
     if explicit in VALID_TASK_TYPES:
         return explicit
     return INTENT_TASK_TYPES.get(str(payload.get("intent", "")).strip(), "")
+
+
+def resolved_task_type_for_question(
+    payload: dict[str, object], question: str
+) -> str:
+    """Use explicit intent first, then deterministic local classification."""
+    explicit = task_type_for_payload(payload)
+    if explicit:
+        return explicit
+    classified = str(
+        classify_batch_question(question).get("task_type", "general")
+    ).strip()
+    return classified if classified in VALID_TASK_TYPES else "general"
 
 
 def general_retrieval_result(
@@ -1482,7 +1501,15 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
         )
         scene = scene_for_payload(payload)
         energy_type = str(payload.get("energy_type", "")).strip()
-        scope = question_scope(effective_question, str(payload.get("intent", "")).strip(), scene)
+        resolved_task_type = resolved_task_type_for_question(
+            payload, effective_question
+        )
+        scope = question_scope(
+            effective_question,
+            str(payload.get("intent", "")).strip(),
+            scene,
+            resolved_task_type,
+        )
         now = utc_now()
 
         persistence_started = time.perf_counter()
@@ -1552,7 +1579,7 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
                 scene,
                 energy_type,
                 context,
-                task_type_for_payload(payload),
+                resolved_task_type,
                 answer_mode,
             )
         else:
@@ -1786,14 +1813,16 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
             )
             scene = scene_for_payload(payload)
             energy_type = str(payload.get("energy_type", "")).strip()
-            scope = question_scope(effective_question, str(payload.get("intent", "")).strip(), scene)
-            display_task_type = task_type_for_payload(payload)
-            if not display_task_type:
-                display_task_type = str(
-                    classify_batch_question(effective_question).get(
-                        "task_type", "general"
-                    )
-                )
+            resolved_task_type = resolved_task_type_for_question(
+                payload, effective_question
+            )
+            scope = question_scope(
+                effective_question,
+                str(payload.get("intent", "")).strip(),
+                scene,
+                resolved_task_type,
+            )
+            display_task_type = resolved_task_type
             display_task_label = (
                 "通用问答"
                 if scope == "general"
@@ -1890,7 +1919,7 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
                     scene,
                     energy_type,
                     context,
-                    task_type_for_payload(payload),
+                    resolved_task_type,
                     answer_mode,
                 )
             else:

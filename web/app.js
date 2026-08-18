@@ -161,7 +161,7 @@ function inferGuidedIntent(question) {
   if (/保用|保修|质保|三包|索赔|在保/.test(text)) return "warranty";
   if (/保养|更换周期|维护周期|多久换|润滑|油液|机油/.test(text)) return "maintenance";
   if (/怎么用|如何使用|如何操作|操作方法|驾驶|设置|驻车再生|功能/.test(text)) return "usage";
-  if (/车辆|卡车|轻卡|重卡|发动机|变速箱|制动|刹车|高压|电池|电机|充电|故障|异常|异响|动力不足|不上高压|挂不上[挡档]|不工作|失效|漏油|漏气|漏水|风扇|空调|dcdc|ptc/.test(text)) return "symptom";
+  if (/车辆|卡车|轻卡|重卡|发动机|变速箱|制动|刹车|转向|方向盘|助力|转向泵|底盘|车桥|轮胎|后处理|尿素|高压|电池|电机|充电|故障|异常|异响|动力不足|不上高压|挂不上[挡档]|不工作|失效|漏油|漏气|漏水|风扇|空调|dcdc|ptc/.test(text)) return "symptom";
   return "";
 }
 
