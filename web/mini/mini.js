@@ -16,8 +16,54 @@ let scrollQueued=false;function scrollBottom(){if(scrollQueued)return;scrollQueu
 function addUser(text){const row=document.createElement("article");row.className="bubble-row user";row.innerHTML=`<div class="bubble">${esc(text)}</div>`;$("conversation").append(row);scrollBottom()}
 function addThinking(){const row=document.createElement("article");row.className="bubble-row assistant thinking";row.id="thinking";row.innerHTML='<div class="avatar">智</div><div class="bubble">正在检索企业资料并分析<span class="thinking-dots"></span></div>';$("conversation").append(row);scrollBottom()}
 function updateThinking(text,streaming=false){const bubble=$("thinking")?.querySelector(".bubble");if(!bubble)return;bubble.textContent=text;if(!streaming)bubble.insertAdjacentHTML("beforeend",'<span class="thinking-dots"></span>');scrollBottom()}
-function createThinkingRenderer(){let received="";let stopped=false;let frame=0;const paint=()=>{frame=0;if(!stopped&&received)updateThinking(received,true)};const schedulePaint=()=>{if(!frame)frame=requestAnimationFrame(paint)};return{get hasDelta(){return received.length>0},status(text){if(!received)updateThinking(text)},push(text){if(!text||stopped)return;received+=text;schedulePaint()},async finish(){if(stopped)return;if(frame)cancelAnimationFrame(frame);if(received)updateThinking(received,true);stopped=true},stop(){if(stopped)return;stopped=true;if(frame)cancelAnimationFrame(frame)}}}
-function removeThinking(){$("thinking")?.remove()}
+function createThinkingRenderer(){
+  let shown="",pending="",stopped=false,timer=0,finishing=false,finishResolve=null;
+  const paint=()=>{
+    timer=0;
+    if(stopped)return;
+    if(pending){
+      const take=pending.length>300?12:pending.length>120?6:pending.length>40?3:1;
+      shown+=pending.slice(0,take);
+      pending=pending.slice(take);
+      updateThinking(shown,true);
+    }
+    if(pending)schedulePaint();
+    else if(finishing&&finishResolve){const resolve=finishResolve;finishResolve=null;resolve()}
+  };
+  const schedulePaint=()=>{if(!timer)timer=window.setTimeout(paint,22)};
+  return{
+    get hasDelta(){return Boolean(shown||pending)},
+    status(text){if(!shown&&!pending)updateThinking(text)},
+    push(text){if(!text||stopped)return;pending+=text;schedulePaint()},
+    async finish(){
+      if(stopped)return;
+      finishing=true;
+      if(pending)await new Promise(resolve=>{finishResolve=resolve;schedulePaint()});
+      stopped=true;
+    },
+    stop(){
+      if(stopped)return;
+      stopped=true;
+      if(timer)window.clearTimeout(timer);
+      timer=0;
+      if(finishResolve)finishResolve();
+      finishResolve=null;
+    }
+  }
+}
+function removeThinking(){
+  const thinking=$("thinking");
+  const conversation=$("conversation");
+  if(!thinking||!conversation)return;
+  const observer=new MutationObserver(()=>{
+    const finalRow=conversation.lastElementChild;
+    if(finalRow&&finalRow!==thinking&&finalRow.classList.contains("assistant")){
+      thinking.replaceWith(finalRow);
+      observer.disconnect();
+    }
+  });
+  observer.observe(conversation,{childList:true});
+}
 function formatAnswer(data){const parts=[data.answer];if(data.solution_steps?.length)parts.push(`\n处理步骤：\n${data.solution_steps.map((item,index)=>`${index+1}. ${item}`).join("\n")}`);if(data.safety_notice)parts.push(`\n安全提示：${data.safety_notice}`);return parts.filter(Boolean).join("\n")}
 function richAnswer(data){return esc(formatAnswer(data)).replace(/[【\[]资料\s*(\d+)[】\]]/g,'<button type="button" class="inline-citation" data-source="$1">【资料$1】</button>')}
 function isContextualReply(value){return /^(是|是的|对|有|有的|没有|否|不是|亮了|点亮了|没亮|未点亮|正常|不正常|能|不能|可以|不可以|不确定|不知道|偶发|一直)$/.test(String(value||"").replace(/[\s，。！？,.!?]/g,""))}

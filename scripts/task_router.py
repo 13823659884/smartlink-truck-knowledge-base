@@ -33,6 +33,21 @@ TASK_SCENES = {
     "general": "",
 }
 
+# Short workshop-style symptom phrases often omit words such as "vehicle" or
+# "fault".  Keep them in one shared list so both online routing and batch task
+# classification still send these questions through the enterprise KB.
+VEHICLE_SYMPTOM_MARKERS = (
+    "动力不足", "加速无力", "爬坡无力", "跑不动", "电耗高", "费电", "续航下降",
+    "能量回收不好用", "能量回收失效", "空调不好用", "空调不工作", "不制冷",
+    "绝缘故障", "绝缘异常", "电机高温", "电池高温", "水温高", "温度高",
+    "不上高压", "无法上高压", "挂不上档", "挂不上挡", "无法挂档", "无法挂挡",
+    "dcdc不工作", "转向油泵不工作", "打气泵不工作", "ptc不工作", "取力器不工作",
+    "充不上电", "无法充电", "充电失败", "充电慢", "充电限流",
+    "启动不了", "无法启动", "无法行驶", "风扇不工作", "风扇不转",
+    "制动不灵敏", "刹车不灵敏", "制动失效", "刹车失效",
+    "漏油", "漏气", "漏水", "异响", "抖动", "冒黑烟", "冒白烟",
+)
+
 CATEGORY_ALIASES = {
     "vin": "vin",
     "vin查询": "vin",
@@ -139,7 +154,7 @@ def classify_batch_question(question: str, explicit: str = "") -> dict[str, Any]
             "询问车辆或应用操作方法",
         ),
         "symptom_diagnosis": (
-            ("不工作", "不灵", "异响", "故障", "异常", "不能", "无法", "失效", "不制冷", "水温高", "没电", "费电", "损坏", "漏", "时走时不走", "吃胎", "报码", "报修", "充电慢", "充电越来越慢", "电流小", "限流", "转速异常", "转速高", "转速低"),
+            VEHICLE_SYMPTOM_MARKERS + ("不工作", "不灵", "故障", "异常", "不能", "无法", "失效", "没电", "损坏", "漏", "时走时不走", "吃胎", "报码", "报修", "充电越来越慢", "电流小", "限流", "转速异常", "转速高", "转速低"),
             13,
             "描述车辆故障现象",
         ),

@@ -238,6 +238,48 @@ def ark_http_error_message(exc: HTTPError) -> tuple[str, str]:
     return f"火山方舟 HTTP {exc.code}: {message or detail[:500]}", code
 
 
+def _focused_answer_policy(answer_target: str, mode: str) -> tuple[str, str, int]:
+    target = str(answer_target or "").strip()
+    labels = {
+        "overview": "含义、适用范围和关键判断标准",
+        "cause": "可能原因及判断依据",
+        "solution": "排查步骤和对应处理方案",
+        "safety": "适用条件、风险和安全注意事项",
+    }
+    if target not in labels:
+        return "", "", 0
+    if target == "solution":
+        output_format = (
+            "严格按以下纯文本格式输出，不要输出JSON或Markdown代码块：\n"
+            "【回答】\n一句话说明处理原则\n"
+            "【处理步骤】\n1. 检查与判断\n2. 对应处理\n"
+            "【安全提示】\n必要的安全注意事项。\n\n"
+        )
+    elif target == "safety":
+        output_format = (
+            "严格按以下纯文本格式输出，不要输出JSON或Markdown代码块：\n"
+            "【回答】\n适用条件和风险结论\n"
+            "【安全提示】\n禁止事项和安全注意事项。\n\n"
+        )
+    else:
+        output_format = (
+            "严格按以下纯文本格式输出，不要输出JSON或Markdown代码块：\n"
+            "【回答】\n针对所选重点的答案\n"
+            "【安全提示】\n仅在确有安全风险时输出。\n\n"
+        )
+    length = "150至350" if mode == "fast" else "300至600"
+    guidance = (
+        f"用户已确认本轮只需要“{labels[target]}”。不要重复输出完整固定模板，"
+        f"不要生成相关问题，不要扩展到其他回答方向；正文以{length}个汉字为宜。"
+        + (
+            "处理步骤应按顺序说明检查对象、判断结果和对应动作。\n"
+            if target == "solution"
+            else "结论按优先级简洁排列，并说明资料依据。\n"
+        )
+    )
+    return output_format, guidance, (900 if mode == "fast" else 1400)
+
+
 def generate_grounded_answer(
     *,
     question: str,
@@ -248,6 +290,7 @@ def generate_grounded_answer(
     scene: str = "",
     mode: str = "deep",
     knowledge_only: bool = True,
+    answer_target: str = "",
     timeout: int = 90,
 ) -> dict[str, Any]:
     mode = "fast" if mode == "fast" else "deep"
@@ -300,37 +343,43 @@ def generate_grounded_answer(
         "深度诊断要求：综合不同文档的证据交叉判断，不要只复述排名第一的资料；"
         "按系统或部件归纳可能原因并标明优先级，说明每项原因的检查对象、检查方法、"
         "正常与异常判断标准、异常后的处理以及维修后的复测方法；资料存在版本或车型差异时必须明确指出。\n"
-        if mode == "deep" and knowledge_only
+        if mode == "deep" and knowledge_only and answer_target in {"", "full"}
         else ""
     )
-    prompt = (
-        role_prompt + "\n" + deep_synthesis_prompt
-        +
+    focused_format, focused_guidance, focused_max_tokens = _focused_answer_policy(
+        answer_target, mode
+    )
+    output_format = focused_format or (
         "严格按以下纯文本格式输出，不要输出JSON或Markdown代码块：\n"
         "【回答】\n完整答案\n"
         "【处理步骤】\n1. 步骤一\n2. 步骤二\n"
         "【相关问题】\n1. 相关问题一\n2. 相关问题二\n"
         "【安全提示】\n安全注意事项。\n\n"
-        f"车型：{vehicle_series or '未指定'}\n"
-        f"场景：{scene or '未指定'}\n"
-        + (
-            (
-                "通用快速回答要求：不要寒暄，第一句话直接回答；问题不需要步骤时不要强行添加。"
-                "可以使用自然语言和常识，不要输出资料编号。\n"
-                if not knowledge_only
-                else "快速模式要求：不要寒暄，第一句话直接给结论。回答段必须包含判断依据以及按优先级排列的"
-                "3至5项可能原因，并结合资料编号解释原因；处理步骤必须给出4至6步，每一步分别说明"
-                "检查对象、检查方法、正常或异常的判断以及异常后的处理。相关问题给出3项。"
-                "除非证据不足，完整回答不得只写一小段，正文以500至800个汉字为宜。\n"
-            )
-            if mode == "fast"
-            else (
-                "通用深度回答要求：完整解释问题，必要时给出例子或步骤，但保持自然简洁，不要输出资料编号。\n"
-                if not knowledge_only
-                else "深度模式要求：完整说明结论、可能原因及优先级、逐步检查方法、判断标准、"
-                "处理建议和仍需确认的信息；引用证据编号，但避免大段重复证据原文。\n"
-            )
+    )
+    answer_guidance = focused_guidance or (
+        (
+            "通用快速回答要求：不要寒暄，第一句话直接回答；问题不需要步骤时不要强行添加。"
+            "可以使用自然语言和常识，不要输出资料编号。\n"
+            if not knowledge_only
+            else "快速模式要求：不要寒暄，第一句话直接给结论。回答段必须包含判断依据以及按优先级排列的"
+            "3至5项可能原因，并结合资料编号解释原因；处理步骤必须给出4至6步，每一步分别说明"
+            "检查对象、检查方法、正常或异常的判断以及异常后的处理。相关问题给出3项。"
+            "除非证据不足，完整回答不得只写一小段，正文以500至800个汉字为宜。\n"
         )
+        if mode == "fast"
+        else (
+            "通用深度回答要求：完整解释问题，必要时给出例子或步骤，但保持自然简洁，不要输出资料编号。\n"
+            if not knowledge_only
+            else "深度模式要求：完整说明结论、可能原因及优先级、逐步检查方法、判断标准、"
+            "处理建议和仍需确认的信息；引用证据编号，但避免大段重复证据原文。\n"
+        )
+    )
+    prompt = (
+        role_prompt + "\n" + deep_synthesis_prompt
+        + output_format
+        + f"车型：{vehicle_series or '未指定'}\n"
+        f"场景：{scene or '未指定'}\n"
+        + answer_guidance
         + f"最近对话：{history[-history_limit:] if history else '无'}\n"
         f"用户问题：{question}\n\n"
         f"企业知识库证据：\n{evidence or '未检索到证据'}"
@@ -343,7 +392,7 @@ def generate_grounded_answer(
             if mode == "fast" or mode_config["shared_with_fast"]
             else "enabled"
         },
-        "max_output_tokens": (
+        "max_output_tokens": focused_max_tokens or (
             (1600 if knowledge_only else 700)
             if mode == "fast"
             else (2200 if knowledge_only else 1000)
@@ -617,6 +666,7 @@ def generate_grounded_answer_stream(
     scene: str = "",
     mode: str = "fast",
     knowledge_only: bool = True,
+    answer_target: str = "",
     timeout: int = 90,
 ) -> Iterator[dict[str, Any]]:
     mode = "fast" if mode == "fast" else "deep"
@@ -672,35 +722,41 @@ def generate_grounded_answer_stream(
         "深度诊断要求：综合不同文档的证据交叉判断，不要只复述排名第一的资料；"
         "按系统或部件归纳可能原因并标明优先级，说明每项原因的检查对象、检查方法、"
         "正常与异常判断标准、异常后的处理以及维修后的复测方法；资料存在版本或车型差异时必须明确指出。\n"
-        if mode == "deep" and knowledge_only
+        if mode == "deep" and knowledge_only and answer_target in {"", "full"}
         else ""
     )
-    prompt = (
-        role_prompt + "\n" + deep_synthesis_prompt
-        +
+    focused_format, focused_guidance, focused_max_tokens = _focused_answer_policy(
+        answer_target, mode
+    )
+    output_format = focused_format or (
         "严格按以下纯文本格式输出：\n"
         "【回答】\n完整答案\n"
         "【处理步骤】\n1. 步骤一\n2. 步骤二\n"
         "【相关问题】\n1. 相关问题一\n2. 相关问题二\n"
         "【安全提示】\n安全注意事项。\n"
-        + (
-            (
-                "通用快速回答要求：不要寒暄，第一句话直接回答；问题不需要步骤时不要强行添加。"
-                "可以使用自然语言和常识，不要输出资料编号。\n"
-                if not knowledge_only
-                else "快速模式要求：不要寒暄，第一句话直接给结论。回答段必须包含判断依据以及按优先级排列的"
-                "3至5项可能原因，并结合资料编号解释原因；处理步骤必须给出4至6步，每一步分别说明"
-                "检查对象、检查方法、正常或异常的判断以及异常后的处理。相关问题给出3项。"
-                "除非证据不足，完整回答不得只写一小段，正文以500至800个汉字为宜。\n"
-            )
-            if mode == "fast"
-            else (
-                "通用深度回答要求：完整解释问题，必要时给出例子或步骤，但保持自然简洁，不要输出资料编号。\n"
-                if not knowledge_only
-                else "深度模式要求：完整说明结论、可能原因及优先级、逐步检查方法、判断标准、"
-                "处理建议和仍需确认的信息；引用证据编号，但避免大段重复证据原文。\n"
-            )
+    )
+    answer_guidance = focused_guidance or (
+        (
+            "通用快速回答要求：不要寒暄，第一句话直接回答；问题不需要步骤时不要强行添加。"
+            "可以使用自然语言和常识，不要输出资料编号。\n"
+            if not knowledge_only
+            else "快速模式要求：不要寒暄，第一句话直接给结论。回答段必须包含判断依据以及按优先级排列的"
+            "3至5项可能原因，并结合资料编号解释原因；处理步骤必须给出4至6步，每一步分别说明"
+            "检查对象、检查方法、正常或异常的判断以及异常后的处理。相关问题给出3项。"
+            "除非证据不足，完整回答不得只写一小段，正文以500至800个汉字为宜。\n"
         )
+        if mode == "fast"
+        else (
+            "通用深度回答要求：完整解释问题，必要时给出例子或步骤，但保持自然简洁，不要输出资料编号。\n"
+            if not knowledge_only
+            else "深度模式要求：完整说明结论、可能原因及优先级、逐步检查方法、判断标准、"
+            "处理建议和仍需确认的信息；引用证据编号，但避免大段重复证据原文。\n"
+        )
+    )
+    prompt = (
+        role_prompt + "\n" + deep_synthesis_prompt
+        + output_format
+        + answer_guidance
         + f"车型：{vehicle_series or '未指定'}\n"
         + f"场景：{scene or '未指定'}\n"
         + f"最近对话：{history[-history_limit:] if history else '无'}\n"
@@ -715,7 +771,7 @@ def generate_grounded_answer_stream(
             if mode == "fast" or mode_config["shared_with_fast"]
             else "enabled"
         },
-        "max_output_tokens": (
+        "max_output_tokens": focused_max_tokens or (
             (1600 if knowledge_only else 700)
             if mode == "fast"
             else (2200 if knowledge_only else 1000)

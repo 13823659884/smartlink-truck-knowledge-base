@@ -8,6 +8,14 @@ const fallbackIntents = [
   { id: "maintenance", name: "保养知识", scene: "养", description: "周期、油液和部件维护", example_question: "变速箱多久保养？" },
   { id: "warranty", name: "保用知识", scene: "保", description: "保用标准和适用条件", example_question: "制动部件是否在保？" },
 ];
+const guidedIntentIds = ["fault", "symptom", "usage", "maintenance", "warranty"];
+const guidedTargets = [
+  { id: "overview", label: "含义与标准", hint: "了解定义、范围或判断标准" },
+  { id: "cause", label: "可能原因", hint: "只分析原因和判断依据" },
+  { id: "solution", label: "排查处理", hint: "给出检查步骤和处理方案" },
+  { id: "safety", label: "注意事项", hint: "查看风险、条件和禁止事项" },
+  { id: "full", label: "完整诊断", hint: "原因、步骤和注意事项全部回答" },
+];
 
 const answerModePolicy = "fast-default-20260805";
 if (localStorage.getItem("answerModePolicy") !== answerModePolicy) {
@@ -146,6 +154,143 @@ function addUserMessage(text) {
   appendMessageNode(node);
 }
 
+function inferGuidedIntent(question) {
+  if (guidedIntentIds.includes(state.intent)) return state.intent;
+  const text = String(question || "").toLowerCase();
+  if (/\b(?:spn|fmi)\s*[:#-]?\s*\d+|\bp[0-9a-f]{4,7}\b|故障码|报码/.test(text)) return "fault";
+  if (/保用|保修|质保|三包|索赔|在保/.test(text)) return "warranty";
+  if (/保养|更换周期|维护周期|多久换|润滑|油液|机油/.test(text)) return "maintenance";
+  if (/怎么用|如何使用|如何操作|操作方法|驾驶|设置|驻车再生|功能/.test(text)) return "usage";
+  if (/车辆|卡车|轻卡|重卡|发动机|变速箱|制动|刹车|高压|电池|电机|充电|故障|异常|异响|动力不足|不上高压|挂不上[挡档]|不工作|失效|漏油|漏气|漏水|风扇|空调|dcdc|ptc/.test(text)) return "symptom";
+  return "";
+}
+
+function detectAnswerTarget(question) {
+  const text = String(question || "").toLowerCase();
+  if (/完整|全面|详细|全部|系统分析/.test(text)) return "full";
+  if (/怎么处理|如何处理|怎么修|如何修|怎么排查|如何排查|维修|解决|处理方案|检查步骤|操作步骤|怎么办/.test(text)) return "solution";
+  if (/原因|为什么|为何|什么导致|可能是/.test(text)) return "cause";
+  if (/注意|风险|安全|禁止|能否继续|可以继续|适用条件/.test(text)) return "safety";
+  if (/是什么|什么意思|含义|定义|标准|周期|多久|范围/.test(text)) return "overview";
+  return "";
+}
+
+function detectVehicleSeries(question) {
+  const text = String(question || "").toUpperCase();
+  return [...series].sort((a, b) => b.length - a.length).find((item) => text.includes(item.toUpperCase())) || "";
+}
+
+function detectEnergyType(question) {
+  const text = String(question || "").toLowerCase();
+  if (/新能源|纯电|电动车|电驱|动力电池|高压系统/.test(text)) return "新能源";
+  if (/传统|燃油|柴油|天然气|燃气/.test(text)) return "传统";
+  return "";
+}
+
+function energyFromVinRecord(record) {
+  const value = String(record?.fuel_type || record?.engine_type || "");
+  if (/纯电|新能源|混动|电驱/.test(value)) return "新能源";
+  if (/柴油|汽油|天然气|燃气|燃油/.test(value)) return "传统";
+  return "";
+}
+
+async function buildGuidanceContext(question) {
+  const intent = inferGuidedIntent(question);
+  if (!intent) return null;
+  let vehicleSeries = detectVehicleSeries(question) || $("vehicleSeries").value;
+  let energyType = detectEnergyType(question) || $("energyType").value;
+  let vinMatched = false;
+  const vehicleId = $("vehicleId").value.trim().toUpperCase();
+  if (/^[A-HJ-NPR-Z0-9]{17}$/.test(vehicleId)) {
+    try {
+      const vin = await getJson(`/api/vin?q=${encodeURIComponent(vehicleId)}`);
+      if (vin.found) {
+        vehicleSeries = vehicleSeries || String(vin.record?.vehicle_series || "");
+        energyType = energyType || energyFromVinRecord(vin.record);
+        vinMatched = true;
+      }
+    } catch (error) {}
+  }
+  if (vehicleSeries && [...$("vehicleSeries").options].some((option) => option.value === vehicleSeries)) $("vehicleSeries").value = vehicleSeries;
+  if (energyType) $("energyType").value = energyType;
+  const answerTarget = detectAnswerTarget(question);
+  return {
+    intent,
+    vehicleSeries,
+    energyType,
+    answerTarget,
+    vinMatched,
+    needsConfirmation: !vehicleSeries || !answerTarget,
+  };
+}
+
+function renderGuidanceCard(question, guide) {
+  const node = document.createElement("div");
+  node.className = "message assistant guidance-message";
+  const content = document.createElement("div");
+  content.className = "message-text guidance-card";
+  const intentOptions = state.intents
+    .filter((item) => guidedIntentIds.includes(item.id))
+    .map((item) => `<option value="${esc(item.id)}" ${item.id === guide.intent ? "selected" : ""}>${esc(item.name)}</option>`)
+    .join("");
+  const seriesOptions = [`<option value="">暂不确定（按通用资料）</option>`]
+    .concat(series.map((item) => `<option value="${esc(item)}" ${item === guide.vehicleSeries ? "selected" : ""}>${esc(item)}</option>`))
+    .join("");
+  content.innerHTML = `
+    <div class="assistant-answer-header"><strong><i>问</i> 请先确认查询条件</strong><span>第一轮</span></div>
+    <p class="guidance-intro">我已识别到问题：<b>${esc(question)}</b>。确认下面信息后，我会在第二轮只回答你需要的内容。</p>
+    ${guide.vinMatched ? '<p class="guidance-vin-tip">已根据VIN自动预填车辆信息，请核对是否正确。</p>' : ""}
+    <div class="guidance-fields">
+      <label><span>问题分类</span><select data-guide="intent">${intentOptions}</select></label>
+      <label><span>车辆系列</span><select data-guide="series">${seriesOptions}</select></label>
+      <label><span>能源类型</span><select data-guide="energy"><option value="">暂不确定</option><option value="传统" ${guide.energyType === "传统" ? "selected" : ""}>传统 / 燃油</option><option value="新能源" ${guide.energyType === "新能源" ? "selected" : ""}>新能源</option></select></label>
+    </div>
+    <div class="guidance-target-title"><b>这次主要想了解什么？</b><small>选择一项</small></div>
+    <div class="guidance-targets"></div>
+    <div class="guidance-actions"><span>车型不确定也可以继续，将按通用资料回答。</span><button type="button" disabled>确认并开始查询</button></div>`;
+  const targets = content.querySelector(".guidance-targets");
+  let selectedTarget = guide.answerTarget;
+  guidedTargets.forEach((item) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.target = item.id;
+    button.classList.toggle("active", selectedTarget === item.id);
+    button.innerHTML = `<b>${esc(item.label)}</b><small>${esc(item.hint)}</small>`;
+    button.addEventListener("click", () => {
+      selectedTarget = item.id;
+      targets.querySelectorAll("button").forEach((target) => target.classList.toggle("active", target === button));
+      confirm.disabled = false;
+    });
+    targets.append(button);
+  });
+  const confirm = content.querySelector(".guidance-actions button");
+  confirm.disabled = !selectedTarget;
+  confirm.addEventListener("click", () => {
+    const intent = content.querySelector('[data-guide="intent"]').value;
+    const vehicleSeries = content.querySelector('[data-guide="series"]').value;
+    const energyType = content.querySelector('[data-guide="energy"]').value;
+    const target = guidedTargets.find((item) => item.id === selectedTarget);
+    const intentInfo = state.intents.find((item) => item.id === intent);
+    if (vehicleSeries) $("vehicleSeries").value = vehicleSeries;
+    $("energyType").value = energyType;
+    selectIntent(intent);
+    content.querySelectorAll("select, button").forEach((control) => { control.disabled = true; });
+    content.classList.add("confirmed");
+    confirm.textContent = "已确认";
+    const summary = `已确认：${vehicleSeries || "车型暂不确定"} · ${energyType || "能源类型暂不确定"} · ${intentInfo?.name || "车辆知识"} · ${target?.label || "指定内容"}`;
+    ask(question, {
+      bypassGuidance: true,
+      displayText: summary,
+      requestIntent: intent,
+      answerTarget: selectedTarget,
+      vehicleSeries,
+      energyType,
+    });
+  });
+  node.append(content);
+  appendMessageNode(node);
+}
+
 function focusSource(index) {
   document.querySelector('.tabs button[data-tab="sources"]')?.click();
   requestAnimationFrame(() => {
@@ -217,23 +362,31 @@ function renderDiagnosis(container, diagnosis) {
   container.append(section);
 }
 
-function addAssistantMessage(data, question) {
-  const node = document.createElement("div");
+function renderAssistantMessage(node, data, question) {
+  node.replaceChildren();
   node.className = "message assistant";
   const content = document.createElement("div");
   content.className = "message-text";
   content.innerHTML = `<div class="assistant-answer-header"><strong><i>AI</i> 智能诊断助手</strong><span>${(data.sources || []).length} 条参考资料</span></div>`;
+  const target = data.answer_target || "full";
   addSection(content, 1, "分析与结论", data.answer, "main");
-  addSection(content, 2, "处理步骤", data.solution_steps || [], "steps");
-  renderDiagnosis(content, data.diagnosis);
-  addSection(content, 3, "相关问题", data.related_questions || [], "related");
-  addSection(content, 4, "安全提示", data.safety_notice, "safety");
+  if (["solution", "full"].includes(target)) addSection(content, 2, "处理步骤", data.solution_steps || [], "steps");
+  if (target === "full") {
+    renderDiagnosis(content, data.diagnosis);
+    addSection(content, 3, "相关问题", data.related_questions || [], "related");
+  }
+  if (["solution", "safety", "full"].includes(target)) addSection(content, 4, "安全提示", data.safety_notice, "safety");
   node.append(content);
   const feedback = document.createElement("div");
   feedback.className = "feedback";
   feedback.innerHTML = '<button data-rating="up">👍 有帮助</button><button data-rating="down">👎 需纠偏</button>';
   feedback.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => saveFeedback(button.dataset.rating, data, question, feedback)));
   node.append(feedback);
+}
+
+function addAssistantMessage(data, question) {
+  const node = document.createElement("div");
+  renderAssistantMessage(node, data, question);
   appendMessageNode(node);
 }
 
@@ -244,37 +397,56 @@ function addStreamingMessage() {
 }
 
 function createStreamRenderer(live) {
-  let received = ""; let stopped = false; let frame = 0;
+  let shown = ""; let pending = ""; let stopped = false; let timer = 0;
+  let finishing = false; let finishResolve = null;
   const paint = () => {
-    frame = 0;
+    timer = 0;
     if (stopped) return;
-    live.content.textContent = received;
+    if (pending) {
+      const take = pending.length > 300 ? 12 : pending.length > 120 ? 6 : pending.length > 40 ? 3 : 1;
+      shown += pending.slice(0, take);
+      pending = pending.slice(take);
+      live.content.textContent = shown;
+    }
     $("conversation").scrollTop = $("conversation").scrollHeight;
+    if (pending) schedulePaint();
+    else if (finishing && finishResolve) {
+      const resolve = finishResolve;
+      finishResolve = null;
+      resolve();
+    }
   };
   const schedulePaint = () => {
-    if (!frame) frame = requestAnimationFrame(paint);
+    if (!timer) timer = window.setTimeout(paint, 22);
   };
   return {
     status(text) {
-      if (!received) {
+      if (!shown && !pending) {
         live.content.textContent = text;
         $("conversation").scrollTop = $("conversation").scrollHeight;
       }
     },
     push(text) {
       if (!text || stopped) return;
-      received += text;
+      pending += text;
       schedulePaint();
     },
     async finish() {
-      if (frame) cancelAnimationFrame(frame);
-      live.content.textContent = received;
-      $("conversation").scrollTop = $("conversation").scrollHeight;
+      finishing = true;
+      if (pending) {
+        await new Promise((resolve) => {
+          finishResolve = resolve;
+          schedulePaint();
+        });
+      }
       stopped = true;
     },
     stop() {
       stopped = true;
-      if (frame) cancelAnimationFrame(frame);
+      if (timer) window.clearTimeout(timer);
+      timer = 0;
+      if (finishResolve) finishResolve();
+      finishResolve = null;
     },
   };
 }
@@ -295,18 +467,37 @@ function addVinResult(data) {
   appendMessageNode(node);
 }
 
-async function ask(question) {
+async function ask(question, options = {}) {
   if (!question) return;
-  addUserMessage(question);
-  if (state.intent === "vin") {
+  if (state.intent === "vin" && !options.bypassGuidance) {
+    addUserMessage(question);
     try { addVinResult(await getJson(`/api/vin?q=${encodeURIComponent(question)}`)); }
     catch (error) { addVinResult({ vin: question, found: false, message: error.message }); }
     return;
   }
+  let requestOptions = { ...options };
+  if (!options.bypassGuidance) {
+    const guide = await buildGuidanceContext(question);
+    if (guide?.needsConfirmation) {
+      addUserMessage(question);
+      renderGuidanceCard(question, guide);
+      return;
+    }
+    if (guide) {
+      requestOptions = {
+        ...requestOptions,
+        requestIntent: guide.intent,
+        answerTarget: guide.answerTarget,
+        vehicleSeries: guide.vehicleSeries,
+        energyType: guide.energyType,
+      };
+    }
+  }
+  addUserMessage(requestOptions.displayText || question);
   const live = addStreamingMessage(); const renderer = createStreamRenderer(live); const submit = document.querySelector('#askForm button[type="submit"]'); submit.disabled = true;
   try {
-    const data = await getStream("/api/search/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question, intent: state.intent, conversation_id: state.conversationId, vehicle_id: $("vehicleId").value, vehicle_series: $("vehicleSeries").value, scene: $("scene").value, energy_type: $("energyType").value, use_agent: true, answer_mode: state.answerMode, include_images: false }) }, { onStatus: (event) => renderer.status(event.text), onMeta: (event) => renderer.status(event.text), onFallback: (event) => { applyAnswerMode(event.answer_mode); renderer.status(event.text); }, onDelta: (event) => renderer.push(event.text || "") });
-    await renderer.finish(); applyAnswerMode(data.answer_mode || state.answerMode); state.conversationId = data.conversation_id; state.last = { question, data }; live.node.remove(); addAssistantMessage(data, question); renderEvidence(data); loadHistory();
+    const data = await getStream("/api/search/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question, intent: requestOptions.requestIntent || state.intent, conversation_id: state.conversationId, vehicle_id: $("vehicleId").value, vehicle_series: requestOptions.vehicleSeries ?? $("vehicleSeries").value, scene: $("scene").value, energy_type: requestOptions.energyType ?? $("energyType").value, answer_target: requestOptions.answerTarget || "", use_agent: true, answer_mode: state.answerMode, include_images: false }) }, { onStatus: (event) => renderer.status(event.text), onMeta: (event) => renderer.status(event.text), onFallback: (event) => { applyAnswerMode(event.answer_mode); renderer.status(event.text); }, onDelta: (event) => renderer.push(event.text || "") });
+    await renderer.finish(); applyAnswerMode(data.answer_mode || state.answerMode); state.conversationId = data.conversation_id; state.last = { question, data }; renderAssistantMessage(live.node, data, question); renderEvidence(data); loadHistory();
   } catch (error) { renderer.stop(); live.node.classList.remove("streaming"); live.content.textContent = `问答失败：${error.message}`; }
   finally { renderer.stop(); submit.disabled = false; }
 }

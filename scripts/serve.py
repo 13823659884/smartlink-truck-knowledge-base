@@ -40,6 +40,7 @@ from source_preview import create_preview
 from task_router import (
     TASK_LABELS,
     TASK_SCENES,
+    VEHICLE_SYMPTOM_MARKERS,
     classify_batch_question,
     normalize_task_type,
     rewrite_engineer_question,
@@ -117,6 +118,8 @@ def question_scope(question: str, intent: str, scene: str) -> str:
     if intent in PROFESSIONAL_INTENTS or scene in {"用", "养", "修", "保"}:
         return "professional"
     if any(marker.lower() in normalized for marker in PROFESSIONAL_MARKERS):
+        return "professional"
+    if any(marker.lower() in normalized for marker in VEHICLE_SYMPTOM_MARKERS):
         return "professional"
     return "general"
 
@@ -237,7 +240,9 @@ def vehicle_series_for_request(vehicle_id: str, explicit_series: str) -> str:
     return str(row["vehicle_series"] or "") if row else ""
 
 
-def model_question_for_intent(question: str, intent: str) -> str:
+def model_question_for_intent(
+    question: str, intent: str, answer_target: str = ""
+) -> str:
     requirements = {
         "fault": (
             "请按故障码查询格式回答：优先给出控制器名称、P码或SPN+FMI、"
@@ -248,7 +253,24 @@ def model_question_for_intent(question: str, intent: str) -> str:
         "maintenance": "请按保养知识格式回答，突出保养周期、适用车型、材料规格、操作步骤和注意事项。",
         "warranty": "请按保用知识格式回答，明确适用范围、时限/里程、判定条件、除外责任和所需凭证。",
     }
-    instruction = requirements.get(intent, "")
+    focus_requirements = {
+        "overview": (
+            "只回答该问题的含义、适用范围和关键判断标准，不展开完整维修流程。"
+        ),
+        "cause": (
+            "重点回答可能原因及其判断依据，按可能性和排查优先级排序；"
+            "除必要的验证动作外，不展开完整维修流程。"
+        ),
+        "solution": (
+            "重点回答由易到难的排查步骤和对应处理方案，说明每一步的判断结果"
+            "以及下一步动作；原因只保留与步骤直接相关的内容。"
+        ),
+        "safety": (
+            "只回答适用条件、风险、禁止事项和安全注意事项，避免输出无关背景。"
+        ),
+        "full": "给出完整诊断，包括含义、原因、检查步骤、处理方案和注意事项。",
+    }
+    instruction = focus_requirements.get(answer_target) or requirements.get(intent, "")
     if not instruction:
         return question
     return (
@@ -1544,12 +1566,15 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
         result["retrieval"]["cache_hit"] = cache_hit
         result["retrieval"]["backend"] = RETRIEVAL_BACKEND
         result["retrieval"]["scope"] = scope
+        result["answer_target"] = str(payload.get("answer_target", "")).strip()
         use_agent = force_agent or bool(payload.get("use_agent", False)) or scope == "general"
         agent_started = time.perf_counter()
         if use_agent:
             agent_result = generate_grounded_answer(
                 question=model_question_for_intent(
-                    effective_question, str(payload.get("intent", "")).strip()
+                    effective_question,
+                    str(payload.get("intent", "")).strip(),
+                    str(payload.get("answer_target", "")).strip(),
                 ),
                 sources=result["sources"],
                 triples=result["triples"],
@@ -1558,6 +1583,7 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
                 scene=scene,
                 mode=answer_mode,
                 knowledge_only=scope == "professional",
+                answer_target=str(payload.get("answer_target", "")).strip(),
             )
             result["agent"] = {
                 key: value
@@ -1713,7 +1739,12 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
         self.start_stream()
         try:
             self.send_stream_event(
-                {"type": "status", "text": "正在分析问题类型"}
+                {
+                    "type": "status",
+                    "stage": "context",
+                    "progress": 5,
+                    "text": "正在读取会话上下文",
+                }
             )
             image_ocr_text = str(payload.get("image_ocr_text", "")).strip()[:4000]
             conversation_id = str(
@@ -1756,6 +1787,27 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
             scene = scene_for_payload(payload)
             energy_type = str(payload.get("energy_type", "")).strip()
             scope = question_scope(effective_question, str(payload.get("intent", "")).strip(), scene)
+            display_task_type = task_type_for_payload(payload)
+            if not display_task_type:
+                display_task_type = str(
+                    classify_batch_question(effective_question).get(
+                        "task_type", "general"
+                    )
+                )
+            display_task_label = (
+                "通用问答"
+                if scope == "general"
+                else TASK_LABELS.get(display_task_type, "车辆专业问答")
+            )
+            self.send_stream_event(
+                {
+                    "type": "status",
+                    "stage": "classification",
+                    "progress": 15,
+                    "task_type": display_task_type,
+                    "text": f"已识别为：{display_task_label}",
+                }
+            )
             answer_mode = (
                 "fast"
                 if str(payload.get("answer_mode", "fast")) == "fast"
@@ -1819,6 +1871,19 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
 
             retrieval_started = time.perf_counter()
             if scope == "professional":
+                retrieval_status = (
+                    "正在匹配结构化故障码和相关资料"
+                    if display_task_type == "fault_code"
+                    else "正在生成问题向量并并行检索关键词资料"
+                )
+                self.send_stream_event(
+                    {
+                        "type": "status",
+                        "stage": "retrieval",
+                        "progress": 30,
+                        "text": retrieval_status,
+                    }
+                )
                 result, cache_hit = cached_retrieval(
                     effective_question,
                     vehicle_series,
@@ -1839,10 +1904,33 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
             result["retrieval"]["cache_hit"] = cache_hit
             result["retrieval"]["backend"] = RETRIEVAL_BACKEND
             result["retrieval"]["scope"] = scope
+            result["answer_target"] = str(payload.get("answer_target", "")).strip()
+            if scope == "professional":
+                exact_count = int(
+                    result.get("retrieval", {}).get(
+                        "exact_fault_match_count", 0
+                    )
+                    or 0
+                )
+                retrieval_finished_text = (
+                    f"故障码精确命中 {exact_count} 条资料，正在整理证据"
+                    if exact_count
+                    else f"混合检索完成，已筛选 {len(result.get('sources', []))} 条资料"
+                )
+                self.send_stream_event(
+                    {
+                        "type": "status",
+                        "stage": "evidence",
+                        "progress": 65,
+                        "text": retrieval_finished_text,
+                    }
+                )
             self.send_stream_event(
                 {
                     "type": "status",
-                    "text": "正在生成通用回答" if scope == "general" else "正在检索企业知识库并生成专业回答",
+                    "stage": "generation",
+                    "progress": 75,
+                    "text": "正在调用通用模型生成回答" if scope == "general" else "正在整理知识证据并生成专业回答",
                 }
             )
             self.send_stream_event(
@@ -1854,9 +1942,9 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
                     "retrieval_ms": retrieval_ms,
                     "retrieval": result.get("retrieval", {}),
                     "text": (
-                        "正在生成通用回答"
+                        "正在调用通用模型生成回答"
                         if scope == "general"
-                        else f"已找到 {len(result.get('sources', []))} 条相关资料，正在生成专业回答"
+                        else f"已采用 {len(result.get('sources', []))} 条相关资料，正在生成专业回答"
                     ),
                 }
             )
@@ -1871,16 +1959,18 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
             # token; treating that transient as an unavailable model produces a
             # misleading message in the mini program.
             mode_attempts = (
-                [("fast", 1), ("fast", 2), ("deep", 1)]
+                [("fast", 1, 30), ("fast", 2, 60), ("deep", 1, 60)]
                 if answer_mode == "fast"
-                else [("deep", 1), ("deep", 2)]
+                else [("deep", 1, 45), ("deep", 2, 90)]
             )
-            for attempt_index, (active_mode, attempt) in enumerate(mode_attempts):
+            for attempt_index, (active_mode, attempt, attempt_timeout) in enumerate(mode_attempts):
                 raw_content = ""
                 visible_answer = ""
                 for event in generate_grounded_answer_stream(
                     question=model_question_for_intent(
-                        effective_question, str(payload.get("intent", "")).strip()
+                        effective_question,
+                        str(payload.get("intent", "")).strip(),
+                        str(payload.get("answer_target", "")).strip(),
                     ),
                     sources=result["sources"],
                     triples=result["triples"],
@@ -1889,11 +1979,11 @@ class KnowledgeHandler(BaseHTTPRequestHandler):
                     scene=scene,
                     mode=active_mode,
                     knowledge_only=scope == "professional",
-                    # Ark may pause for more than 12 seconds between streaming
-                    # chunks even when the model and key are healthy. A longer
-                    # read timeout prevents transient provider latency from being
-                    # reported to users as "agent unavailable".
-                    timeout=90,
+                    answer_target=str(payload.get("answer_target", "")).strip(),
+                    # Do not let a dead first connection block the UI for 90
+                    # seconds.  The first attempt fails fast; the retry keeps a
+                    # longer read window for genuinely slow generations.
+                    timeout=attempt_timeout,
                 ):
                     if event.get("type") == "delta":
                         raw_content += str(event.get("text", ""))
